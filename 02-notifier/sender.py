@@ -1,4 +1,5 @@
 import asyncio
+import html
 import os
 from aiogram import Bot
 from aiogram.enums import ParseMode
@@ -18,15 +19,19 @@ NOT_MEMBER_TEXT = (
 )
 
 STACK_ALIASES = {
-    "ML/AI": ["ml", "ai", "machine learning", "deep learning", "nlp", "llm", "data science"],
+    "ML/AI": ["ml", "ai", "machine learning", "deep learning", "nlp", "llm", "data science",
+              "ии", "искусственный интеллект", "машинное обучение", "нейро", "нлп", "компьютерное зрение"],
     "Mobile": ["mobile", "ios", "android", "flutter", "react native", "swift", "kotlin"],
     "FullStack": ["fullstack", "full stack", "full-stack"],
-    "DevOps": ["devops", "sre", "infrastructure", "kubernetes", "k8s"],
+    "DevOps": ["devops", "sre", "infrastructure", "kubernetes", "k8s", "devops", "девопс"],
     "QA": ["qa", "quality assurance", "тестировщик", "тестирование"],
     "PM": ["product manager", "менеджер продукта", "project manager"],
     "Data": ["data", "аналитик", "analyst"],
-    "Backend": ["backend", "back-end", "back end"],
-    "Frontend": ["frontend", "front-end", "front end"],
+    "Backend": ["backend", "back-end", "back end", "python", "java ", "golang", "go ",
+                "node.js", "nodejs", "ruby", "php", "scala", "rust", "c#", ".net",
+                "бэкенд", "бэк"],
+    "Frontend": ["frontend", "front-end", "front end", "react", "vue", "angular",
+                 "javascript", "typescript", "фронтенд", "фронт"],
 }
 
 
@@ -55,30 +60,34 @@ def _vacancy_matches(vacancy: dict, stacks: list) -> bool:
     return False
 
 
+def _esc(text: str) -> str:
+    return html.escape(text or "")
+
+
 def _format_vacancy(v: dict) -> str:
-    title = v.get("title") or "Вакансия"
-    parts = [f"*{title}*", ""]
+    title = _esc(v.get("title") or "Вакансия")
+    parts = [f"<b>{title}</b>", ""]
 
     if v.get("company_name"):
-        parts.append(f"*Компания:* {v['company_name']}")
+        parts.append(f"<b>Компания:</b> {_esc(v['company_name'])}")
     if v.get("work_format"):
-        parts.append(f"*Формат:* {v['work_format']}")
+        parts.append(f"<b>Формат:</b> {_esc(v['work_format'])}")
     if v.get("salary"):
-        parts.append(f"*Уровень ЗП:* {v['salary']}")
+        parts.append(f"<b>Уровень ЗП:</b> {_esc(v['salary'])}")
 
     if v.get("telegraph_url"):
         parts.append("")
-        parts.append(f"*Описание:* {v['telegraph_url']}")
+        parts.append(f"<b>Описание:</b> {_esc(v['telegraph_url'])}")
 
     if v.get("recruiter_contact"):
         parts.append("")
-        parts.append(f"*Связаться с HR:* {v['recruiter_contact']}")
+        parts.append(f"<b>Связаться с HR:</b> {_esc(v['recruiter_contact'])}")
 
     return "\n".join(parts)
 
 
 async def run_digest(bot_token: str, lookback_hours: int):
-    bot = Bot(token=bot_token, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
+    bot = Bot(token=bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     try:
         users = await get_active_users()
         all_vacancies = await get_fresh_vacancies(lookback_hours)
@@ -121,7 +130,7 @@ async def run_digest(bot_token: str, lookback_hours: int):
                           "september":"сентября","october":"октября","november":"ноября","december":"декабря"}
                 for en, ru in months.items():
                     date_str = date_str.replace(en, ru)
-                await bot.send_message(tg_id, f"📋 *Свежая подборка вакансий на {date_str}*")
+                await bot.send_message(tg_id, f"📋 <b>Свежая подборка вакансий на {date_str}</b>")
                 await asyncio.sleep(0.3)
 
                 for v in to_send:
@@ -133,7 +142,7 @@ async def run_digest(bot_token: str, lookback_hours: int):
                 if leftover > 0:
                     await bot.send_message(
                         tg_id,
-                        f"📋 И ещё *{leftover}* вакансий по твоим стекам — завтра пришлю следующую порцию.",
+                        f"📋 И ещё <b>{leftover}</b> вакансий по твоим стекам — завтра пришлю следующую порцию.",
                     )
                     for v in matched[MAX_PER_USER:]:
                         await mark_sent(tg_id, v["id"])
