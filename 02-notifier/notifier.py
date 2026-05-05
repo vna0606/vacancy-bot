@@ -22,13 +22,14 @@ async def main():
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
-        lambda: asyncio.create_task(run_digest(BOT_TOKEN, LOOKBACK_HOURS)),
+        run_digest,
+        args=[BOT_TOKEN, LOOKBACK_HOURS],
         trigger="cron",
         hour=NOTIFY_HOUR,
         minute=0,
     )
     scheduler.start()
-    print(f"[notifier] Scheduled daily digest at {NOTIFY_HOUR}:00. Ctrl+C to stop.")
+    print(f"[notifier] Scheduled daily digest at {NOTIFY_HOUR}:00 UTC. Ctrl+C to stop.")
     try:
         while True:
             await asyncio.sleep(60)
