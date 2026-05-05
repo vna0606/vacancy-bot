@@ -7,6 +7,7 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 NOTIFY_HOUR = int(os.getenv("NOTIFY_HOUR", "9"))
+NOTIFY_MINUTE = int(os.getenv("NOTIFY_MINUTE", "0"))
 LOOKBACK_HOURS = int(os.getenv("VACANCIES_LOOKBACK_HOURS", "24"))
 
 from sender import run_digest
@@ -26,10 +27,10 @@ async def main():
         args=[BOT_TOKEN, LOOKBACK_HOURS],
         trigger="cron",
         hour=NOTIFY_HOUR,
-        minute=0,
+        minute=NOTIFY_MINUTE,
     )
     scheduler.start()
-    print(f"[notifier] Scheduled daily digest at {NOTIFY_HOUR}:00 UTC. Ctrl+C to stop.")
+    print(f"[notifier] Scheduled daily digest at {NOTIFY_HOUR}:{NOTIFY_MINUTE:02d} UTC. Ctrl+C to stop.")
     try:
         while True:
             await asyncio.sleep(60)
