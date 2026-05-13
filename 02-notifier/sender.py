@@ -25,7 +25,6 @@ STACK_ALIASES = {
     "FullStack": ["fullstack", "full stack", "full-stack"],
     "DevOps": ["devops", "sre", "infrastructure", "kubernetes", "k8s", "devops", "девопс"],
     "QA": ["qa", "quality assurance", "тестировщик", "тестирование"],
-    "PM": ["product manager", "менеджер продукта", "project manager"],
     "Data": ["data", "аналитик", "analyst"],
     "Backend": ["backend", "back-end", "back end", "python", "java ", "golang", "go ",
                 "node.js", "nodejs", "ruby", "php", "scala", "rust", "c#", ".net",

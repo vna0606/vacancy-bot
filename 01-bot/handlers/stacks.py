@@ -15,13 +15,11 @@ ALL_STACKS = [
     "ML/AI",
     "Data",
     "QA",
-    "PM",
 ]
 
 STACK_MENU_TEXT = (
     "Выбери одно или несколько направлений — буду присылать вакансии по каждому.\n"
-    "Mobile включает iOS, Android и Flutter.\n"
-    "PM — Product Manager.\n\n"
+    "Mobile включает iOS, Android и Flutter.\n\n"
     "Нажми 💾 Сохранить когда закончишь:"
 )
 
