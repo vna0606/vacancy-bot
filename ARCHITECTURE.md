@@ -43,10 +43,6 @@ vacancy-bot/
 3. **Нечёткое сопоставление стека**: сравнение `vacancies.direction` с `users.stacks` через `LOWER() + LIKE` — регистронезависимое, позволяет найти "python" в "Python Backend". Используются расширенные алиасы для маппинга технологий.
 4. **Встроенный scheduler в 01-bot**: bot.py запускает APScheduler параллельно с polling. По cron-расписанию `mon-fri hour=NOTIFY_HOUR, minute=NOTIFY_MINUTE` запускает `02-notifier/notifier.py` как subprocess. По умолчанию рассылка настроена на 13:00 UTC (16:00 MSK).
 
-## Связи с другими проектами
-- **it-vacancies-base**: главный поставщик данных. Таблица `vacancies` заполняется it-vacancies-base pipeline и читается этим ботом через Turso. Для синхронизации нужен 04-sync шаг в it-vacancies-base.
-- **outreach-system**: смежный проект по работе с IT-каналом, но другая аудитория (рекламодатели vs соискатели).
-
 # Ecosystem Map
 
 ## Проекты
@@ -56,10 +52,12 @@ vacancy-bot/
 | `vacancy-bot` | Персонализированная рассылка вакансий соискателям | Python (aiogram), Turso | Таблица `vacancies` (Turso) | Сообщения в Telegram |
 | `outreach-system` | Поиск рекламодателей, контактов и автоматизация рассылок | Python, Telethon, OpenAI, Hunter.io, Turso | Telegram, сайты, Hunter.io | Google Sheets, Notion CRM, Email/TG рассылки |
 | `tg-business-bot` | AI-автоответчик для бизнеса с интеграцией в CRM | Python (python-telegram-bot), Gemini CLI | Входящие сообщения в Telegram | Автоответы, медиакит, карточки лидов в Notion CRM |
-| `task-distributor` | Транскрибация встреч и управление задачами | Bash, Python, Deepgram, Claude CLI | Аудио/видео записи встреч | Транскрипты и задачи в Notion / Google Drive |
-| `mood-diary` | Дневник настроения с AI-аналитикой | TypeScript, Next.js, Turso, AI API | Записи пользователя (текст/голос) | Статистика, инсайты, графики |
-| `agent-teams` | Оркестратор специализированных AI-агентов и навыков | Claude Code, Markdown-агенты, Python/JS Skills | Текстовые задачи, документы, URL | Ресёрч, отчёты, веб-артефакты, Google Sheets |
+| `task-distributor` | Транскрибация встреч и управление задачами (Legacy/Scripts) | Bash, Python, Deepgram, Claude CLI | Аудио/видео записи встреч | Транскрипты и задачи в Notion / Google Drive |
+| `meeting-tasks` | Автоматизированный сбор и трекинг задач из встреч | Python, SQLite | Транскрипты, сессии встреч | Статусы задач, отчеты |
 | `notion-pm` | Полный цикл управления проектами (Capture → Detail → Plan → Execute) | Python (aiogram), faster-whisper, Claude/Gemini CLI, Notion API | Голосовые и текстовые сообщения Telegram | Проекты, детальные планы и задачи в Notion |
+| `mood-diary` | Дневник настроения with AI-аналитикой | TypeScript, Next.js, Turso, AI API | Записи пользователя (текст/голос) | Статистика, инсайты, графики |
+| `agent-teams` | Оркестратор специализированных AI-агентов и навыков | Claude Code, Markdown-агенты, Python/JS Skills | Текстовые задачи, документы, URL | Ресёрч, отчёты, веб-артефакты, Google Sheets |
+| `finance-tracker` | Telegram Mini App для управления финансами | React, Telegram Mini App API, CSS | Транзакции, доходы/расходы | Визуализация бюджета, графики |
 
 ## Общие интеграции
 Сервисы которые используются в нескольких проектах:
@@ -67,23 +65,21 @@ vacancy-bot/
 | Сервис | Используется в |
 |--------|---------------|
 | **Turso (libSQL cloud)** | `it-vacancies-base`, `vacancy-bot`, `mood-diary`, `outreach-system` |
-| **Telegram API / Bot API** | `it-vacancies-base`, `vacancy-bot`, `outreach-system`, `tg-business-bot`, `task-distributor`, `notion-pm` |
-| **Telethon (MTProto)** | `it-vacancies-base` (parser), `outreach-system` (parser) |
-| **OpenAI API** | `it-vacancies-base` (extractor), `outreach-system` (classification) |
-| **Notion API** | `outreach-system` (CRM), `task-distributor` (задачи), `notion-pm` (проекты), `tg-business-bot` (CRM) |
+| **Telegram API / Bot API** | `it-vacancies-base`, `vacancy-bot`, `outreach-system`, `tg-business-bot`, `notion-pm`, `finance-tracker` |
+| **Telethon (MTProto)** | `it-vacancies-base` (parser), `outreach-system` (parser/sender) |
+| **OpenAI API** | `it-vacancies-base`, `outreach-system` |
+| **Notion API** | `outreach-system` (CRM), `notion-pm` (проекты), `tg-business-bot` (CRM), `task-distributor` |
 | **Google Sheets API** | `outreach-system` (база контактов), `agent-teams` (skill: google-sheets) |
 | **Gemini CLI** | `tg-business-bot` (ответы), `notion-pm` (анализ идей) |
 | **Claude CLI / Code** | `task-distributor` (саммари), `agent-teams` (основа), `notion-pm` (планирование) |
-| **n8n** | `task-distributor`, `outreach-system`, `it-vacancies-base` (автоматизация) |
 | **Deepgram / Whisper** | `task-distributor` (ASR), `mood-diary` (голос), `notion-pm` (захват идей) |
 
 ## Общие переменные окружения
 | Переменная | Проекты |
 |------------|---------|
-| `TURSO_URL` / `TURSO_AUTH_TOKEN` | it-vacancies-base, vacancy-bot, outreach-system, mood-diary |
+| `TURSO_URL` / `TOKEN` | it-vacancies-base, vacancy-bot, outreach-system, mood-diary |
 | `TELEGRAM_API_ID` / `HASH` | it-vacancies-base, outreach-system |
-| `TELEGRAM_BOT_TOKEN` | it-vacancies-base, vacancy-bot, tg-business-bot, notion-pm |
-| `OPENAI_API_KEY` | it-vacancies-base, outreach-system |
+| `TELEGRAM_BOT_TOKEN` | it-vacancies-base, vacancy-bot, tg-business-bot, notion-pm, finance-tracker |
 | `NOTION_TOKEN` | outreach-system, task-distributor, notion-pm, tg-business-bot |
 
 ## Связи между проектами
@@ -128,7 +124,20 @@ vacancy-bot/
 │ (Deep Research,     │         │ (Next.js + AI Chat + │
 │  Artifacts, Digest) │         │  Turso Analytics)    │
 └─────────────────────┘         └─────────────────────┘
+
+                        ┌─────────────────────┐
+                        │   finance-tracker   │
+                        │ (Telegram Mini App) │
+                        └─────────────────────┘
 ```
+
+### Состояние реализации:
+- **notion-pm**: Полностью развернуты модули от захвата (02-bot) до исполнения (05-executor). Использует `project_map.py` для синхронизации.
+- **agent-teams**: Активная библиотека навыков: `web-artifacts-builder`, `slack-gif-creator`, `frontend-design`, `google-sheets`.
+- **finance-tracker**: Создана дизайн-система (Fintrack Design System) и прототип интерфейса на React для Telegram Mini App.
+- **it-vacancies-base**: Стабильный цикл парсинга и публикации (01-parser + 03-processor).
+- **meeting-tasks**: Новый модуль для структурированного ведения задач из сессий встреч (collector + runner).
+- **mood-diary**: Стабильная PWA/Telegram версия с глубокой аналитикой в папке `insights`.
 
 ## Известные особенности и ограничения
 - Шаг синхронизации `04-sync` (it-vacancies-base → Turso) не реализован в репозитории — без него vacancies в Turso не появятся.
@@ -138,5 +147,6 @@ vacancy-bot/
 - Фикс `AsyncIOScheduler`: корутина передается напрямую во избежание `RuntimeError: no running event loop`.
 
 ## История изменений
+- 2026-05-17 — удаление специализации "PM" из списка доступных стеков в `01-bot/handlers/stacks.py`, очистка репозитория от `.pyc` файлов.
 - 2026-05-10 — поддержка NOTIFY_MINUTE, переход на HTML parse mode, расширенные алиасы стеков, исправление инициализации AsyncIOScheduler.
 - 2026-05-04 — первичная документация.
