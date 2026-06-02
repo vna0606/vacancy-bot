@@ -1,7 +1,7 @@
 import os
-from aiogram import Router, Bot
+from aiogram import Router, Bot, F
 from aiogram.filters import CommandStart
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 from db import get_user, upsert_user, update_notify
 
@@ -11,10 +11,13 @@ MAIN_MENU = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="⚙️ Настроить стек"), KeyboardButton(text="🔔 Уведомления")],
         [KeyboardButton(text="👤 Мой профиль")],
+        [KeyboardButton(text="🔒 Закрытое сообщество")],
     ],
     resize_keyboard=True,
     persistent=True,
 )
+
+COMMUNITY_URL = "https://boosty.to/ulbitv?utm_source=vac_bot"
 
 
 async def is_community_member(bot: Bot, tg_id: int) -> bool:
@@ -57,4 +60,19 @@ async def cmd_start(message: Message, bot: Bot):
         "будем присылать подборку под твой стек.\n\n"
         "Нажми *⚙️ Настроить стек*, чтобы выбрать направления 👇",
         reply_markup=MAIN_MENU,
+    )
+
+
+@router.message(F.text == "🔒 Закрытое сообщество")
+async def cmd_community(message: Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Перейти в сообщество", url=COMMUNITY_URL)]
+    ])
+    await message.answer(
+        '*🔒 Закрытое сообщество "Технари"*\n\n'
+        "IT-сообщество для разработчиков, которые хотят развивать системное мышление, "
+        "получать классные офферы и расти по карьерной лестнице.\n"
+        "Без мотивационного шума, успешного успеха и бесконечных курсов ради курсов.\n\n"
+        "Все подробности по кнопке ниже",
+        reply_markup=kb,
     )
