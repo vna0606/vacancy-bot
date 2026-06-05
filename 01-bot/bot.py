@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'))
 
-from handlers import start, stacks, settings
+from handlers import start, stacks, settings, admin
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 NOTIFY_HOUR = int(os.getenv("NOTIFY_HOUR", "9"))
@@ -38,6 +38,7 @@ async def main():
     dp.include_router(start.router)
     dp.include_router(stacks.router)
     dp.include_router(settings.router)
+    dp.include_router(admin.router)
 
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     scheduler = AsyncIOScheduler()
