@@ -85,5 +85,8 @@ async def mark_sent(user_tg_id: int, vacancy_id: int):
     )
 
 
-async def disable_user(tg_id: int):
-    await execute("UPDATE users SET notify_enabled = 0 WHERE tg_id = ?", [tg_id])
+async def disable_user(tg_id: int, reason: str = "blocked"):
+    await execute(
+        "UPDATE users SET notify_enabled = 0, disabled_reason = ? WHERE tg_id = ?",
+        [reason, tg_id],
+    )

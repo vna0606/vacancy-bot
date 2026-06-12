@@ -2,7 +2,7 @@ from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
-from db import get_user, upsert_user, update_notify
+from db import get_user, upsert_user, update_notify, update_last_seen, log_event
 
 router = Router()
 
@@ -41,7 +41,10 @@ async def btn_notify(message: Message):
 async def cb_notify_toggle(callback: CallbackQuery):
     tg_id = callback.from_user.id
     enabled = 1 if callback.data == 'notify_on' else 0
-    await update_notify(tg_id, enabled)
+    reason = None if enabled else 'manual'
+    await update_notify(tg_id, enabled, reason)
+    await update_last_seen(tg_id)
+    await log_event(tg_id, 'notify_on' if enabled else 'notify_off')
     status = 'включены ✅' if enabled else 'выключены ❌'
     toggle_text = '❌ Выключить' if enabled else '✅ Включить'
     toggle_cb = 'notify_off' if enabled else 'notify_on'

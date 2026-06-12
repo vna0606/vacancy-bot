@@ -68,33 +68,75 @@ async def get_user(tg_id: int):
     return user
 
 
-async def upsert_user(tg_id: int, username: str, full_name: str):
+async def upsert_user(tg_id: int, username: str, full_name: str, ref_source: str = None):
     await execute(
-        """INSERT INTO users (tg_id, username, full_name, stacks, notify_enabled, notify_hour)
-           VALUES (?, ?, ?, '[]', 1, 9)
+        """INSERT INTO users (tg_id, username, full_name, stacks, notify_enabled, notify_hour, ref_source)
+           VALUES (?, ?, ?, '[]', 1, 9, ?)
            ON CONFLICT(tg_id) DO UPDATE SET
                username = excluded.username,
                full_name = excluded.full_name""",
-        [tg_id, username, full_name],
+        [tg_id, username, full_name, ref_source],
     )
 
 
 async def update_stacks(tg_id: int, stacks: list):
     await execute(
-        "UPDATE users SET stacks = ? WHERE tg_id = ?",
+        "UPDATE users SET stacks = ?, stacks_set_at = CURRENT_TIMESTAMP WHERE tg_id = ?",
         [json.dumps(stacks, ensure_ascii=False), tg_id],
     )
 
 
-async def update_notify(tg_id: int, enabled: int):
-    await execute(
-        "UPDATE users SET notify_enabled = ? WHERE tg_id = ?",
-        [enabled, tg_id],
-    )
+async def update_notify(tg_id: int, enabled: int, reason: str = None):
+    if reason is not None:
+        await execute(
+            "UPDATE users SET notify_enabled = ?, disabled_reason = ? WHERE tg_id = ?",
+            [enabled, reason, tg_id],
+        )
+    else:
+        await execute(
+            "UPDATE users SET notify_enabled = ? WHERE tg_id = ?",
+            [enabled, tg_id],
+        )
 
 
 async def update_notify_hour(tg_id: int, hour: int):
     await execute(
         "UPDATE users SET notify_hour = ? WHERE tg_id = ?",
         [hour, tg_id],
+    )
+
+
+async def update_last_seen(tg_id: int):
+    await execute(
+        "UPDATE users SET last_seen_at = CURRENT_TIMESTAMP WHERE tg_id = ?",
+        [tg_id],
+    )
+
+
+async def log_event(tg_id: int, event: str, payload: str = None):
+    await execute(
+        "INSERT INTO user_events (tg_id, event, payload) VALUES (?, ?, ?)",
+        [tg_id, event, payload],
+    )
+
+
+async def init_analytics_schema():
+    for col_sql in [
+        "ALTER TABLE users ADD COLUMN last_seen_at TIMESTAMP",
+        "ALTER TABLE users ADD COLUMN disabled_reason TEXT",
+        "ALTER TABLE users ADD COLUMN stacks_set_at TIMESTAMP",
+        "ALTER TABLE users ADD COLUMN ref_source TEXT",
+    ]:
+        try:
+            await execute(col_sql)
+        except Exception:
+            pass  # column already exists
+    await execute(
+        """CREATE TABLE IF NOT EXISTS user_events (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            tg_id      INTEGER NOT NULL,
+            event      TEXT NOT NULL,
+            payload    TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )"""
     )

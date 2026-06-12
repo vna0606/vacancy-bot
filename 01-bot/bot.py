@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'))
 
 from handlers import start, stacks, settings, admin
+from db import init_analytics_schema
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 NOTIFY_HOUR = int(os.getenv("NOTIFY_HOUR", "9"))
@@ -52,6 +53,7 @@ async def main():
     scheduler.start()
     print(f"[bot] Started. Daily digest scheduled at {NOTIFY_HOUR}:00 UTC")
 
+    await init_analytics_schema()
     await bot.delete_webhook(drop_pending_updates=True)
     try:
         await dp.start_polling(bot)

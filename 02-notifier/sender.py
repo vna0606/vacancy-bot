@@ -101,7 +101,7 @@ async def run_digest(bot_token: str, lookback_hours: int):
             # Проверяем членство в сообществе
             if not await is_community_member(bot, tg_id):
                 print(f"[notifier] tg_id={tg_id} not in community — disabling")
-                await disable_user(tg_id)
+                await disable_user(tg_id, reason="non_member")
                 try:
                     await bot.send_message(tg_id, NOT_MEMBER_TEXT)
                 except Exception:
@@ -150,7 +150,7 @@ async def run_digest(bot_token: str, lookback_hours: int):
 
             except TelegramForbiddenError:
                 print(f"[notifier] tg_id={tg_id} blocked bot — disabling")
-                await disable_user(tg_id)
+                await disable_user(tg_id, reason="blocked")
             except TelegramBadRequest as e:
                 print(f"[notifier] tg_id={tg_id} bad request: {e}")
 

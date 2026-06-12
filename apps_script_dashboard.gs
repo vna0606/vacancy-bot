@@ -46,8 +46,12 @@ function turso_(sql) {
   });
 
   const result = JSON.parse(response.getContentText());
-  const cols = result.results[0].response.result.cols.map(c => c.name);
-  const rows = result.results[0].response.result.rows.map(row =>
+  const res = result.results[0];
+  if (!res || res.type === 'error') {
+    throw new Error('Turso error: ' + JSON.stringify(res && res.error ? res.error : res) + '\nSQL: ' + sql);
+  }
+  const cols = res.response.result.cols.map(c => c.name);
+  const rows = res.response.result.rows.map(row =>
     row.map(cell => (cell.type === 'null' ? null : cell.value))
   );
   return rows.map(row => {
@@ -191,4 +195,226 @@ function updateStats() {
       .build();
     sheet.insertChart(dynamicsChart);
   }
+
+  updateFunnel_();
+}
+
+function updateFunnel_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('Воронка') || ss.insertSheet('Воронка');
+  sheet.clear();
+  sheet.getCharts().forEach(c => sheet.removeChart(c));
+
+  const HEADER_BG = '#4a86e8';
+  const HEADER_FONT = '#ffffff';
+  const HIGHLIGHT_BG = '#eaf1fb';
+  const GREEN_BG = '#d9ead3';
+  const YELLOW_BG = '#fff2cc';
+  const RED_BG = '#fce5cd';
+
+  const styleHeader = (r, c, w) => {
+    sheet.getRange(r, c, 1, w)
+      .setFontWeight('bold').setBackground(HEADER_BG).setFontColor(HEADER_FONT);
+  };
+  const border = (r, c, rows, cols) => {
+    sheet.getRange(r, c, rows, cols).setBorder(true, true, true, true, true, true);
+  };
+
+  sheet.getRange('A1').setValue('Обновлено: ' + Utilities.formatDate(new Date(), 'Europe/Moscow', 'yyyy-MM-dd HH:mm')).setFontStyle('italic');
+
+  // --- Воронка активации ---
+  const users = turso_('SELECT notify_enabled, stacks, stacks_set_at FROM users');
+  const totalUsers = users.length;
+  const stackSet = users.filter(u => u.stacks_set_at !== null).length;
+  const activeUsers = users.filter(u => String(u.notify_enabled) === '1').length;
+  const sentRows = turso_('SELECT COUNT(DISTINCT user_tg_id) AS cnt FROM sent_notifications');
+  const gotVacancy = parseInt(sentRows[0].cnt || 0, 10);
+
+  let row = 3;
+  sheet.getRange(row, 1, 1, 4).merge().setValue('🎯 Воронка активации')
+    .setHorizontalAlignment('center');
+  styleHeader(row, 1, 4);
+  row++;
+
+  const funnelHeaderRow = row;
+  sheet.getRange(row, 1).setValue('Этап');
+  sheet.getRange(row, 2).setValue('Пользователей');
+  sheet.getRange(row, 3).setValue('% от зарегистрированных');
+  sheet.getRange(row, 4).setValue('% от предыдущего');
+  styleHeader(row, 1, 4);
+  row++;
+
+  const funnelData = [
+    ['Зарегистрировались', totalUsers, 100, 100],
+    ['Настроили стек', stackSet, pct_(stackSet, totalUsers), pct_(stackSet, totalUsers)],
+    ['Уведомления включены', activeUsers, pct_(activeUsers, totalUsers), pct_(activeUsers, stackSet)],
+    ['Получили хотя бы одну вакансию', gotVacancy, pct_(gotVacancy, totalUsers), pct_(gotVacancy, activeUsers)],
+  ];
+  const funnelBGs = [GREEN_BG, GREEN_BG, YELLOW_BG, YELLOW_BG];
+
+  funnelData.forEach(([label, count, pctTotal, pctPrev], i) => {
+    sheet.getRange(row, 1).setValue(label);
+    sheet.getRange(row, 2).setValue(count).setFontWeight('bold').setFontSize(13);
+    sheet.getRange(row, 3).setValue(pctTotal + '%');
+    sheet.getRange(row, 4).setValue(pctPrev + '%');
+    sheet.getRange(row, 1, 1, 4).setBackground(funnelBGs[i]);
+    row++;
+  });
+  border(funnelHeaderRow, 1, funnelData.length + 1, 4);
+
+  // --- Почему выключены уведомления ---
+  row += 2;
+  const disabledRows = turso_(
+    "SELECT disabled_reason, COUNT(*) AS cnt FROM users WHERE notify_enabled = 0 GROUP BY disabled_reason"
+  );
+  const disabledTotal = disabledRows.reduce((s, r) => s + parseInt(r.cnt, 10), 0);
+
+  sheet.getRange(row, 1, 1, 3).merge().setValue('❌ Причины отключения уведомлений')
+    .setHorizontalAlignment('center');
+  styleHeader(row, 1, 3);
+  row++;
+
+  const disabledHeaderRow = row;
+  sheet.getRange(row, 1).setValue('Причина');
+  sheet.getRange(row, 2).setValue('Пользователей');
+  sheet.getRange(row, 3).setValue('% от отключённых');
+  styleHeader(row, 1, 3);
+  row++;
+
+  const REASON_LABELS = {
+    'manual':     '👤 Выключил сам',
+    'blocked':    '🚫 Заблокировал бота',
+    'non_member': '🔒 Не в сообществе',
+    null:         '❓ Причина неизвестна',
+  };
+  const reasonBGs = {
+    'manual': YELLOW_BG, 'blocked': RED_BG, 'non_member': RED_BG, null: HIGHLIGHT_BG,
+  };
+
+  disabledRows.forEach(r => {
+    const cnt = parseInt(r.cnt, 10);
+    const label = REASON_LABELS[r.disabled_reason] || r.disabled_reason || '❓ Причина неизвестна';
+    const bg = reasonBGs[r.disabled_reason] || HIGHLIGHT_BG;
+    sheet.getRange(row, 1).setValue(label);
+    sheet.getRange(row, 2).setValue(cnt).setFontWeight('bold');
+    sheet.getRange(row, 3).setValue(pct_(cnt, disabledTotal) + '%');
+    sheet.getRange(row, 1, 1, 3).setBackground(bg);
+    row++;
+  });
+  if (disabledRows.length === 0) {
+    sheet.getRange(row, 1).setValue('Нет данных');
+    row++;
+  }
+  border(disabledHeaderRow, 1, Math.max(disabledRows.length, 1) + 1, 3);
+
+  // --- Активность: живые пользователи ---
+  row += 2;
+  const activity = turso_(
+    "SELECT " +
+    "COUNT(CASE WHEN last_seen_at >= datetime('now','-7 days') THEN 1 END) AS w7, " +
+    "COUNT(CASE WHEN last_seen_at >= datetime('now','-30 days') THEN 1 END) AS m30, " +
+    "COUNT(CASE WHEN last_seen_at IS NULL THEN 1 END) AS never " +
+    "FROM users"
+  )[0];
+
+  sheet.getRange(row, 1, 1, 3).merge().setValue('🟢 Активность пользователей')
+    .setHorizontalAlignment('center');
+  styleHeader(row, 1, 3);
+  row++;
+  const actHeaderRow = row;
+  sheet.getRange(row, 1).setValue('Период');
+  sheet.getRange(row, 2).setValue('Пользователей');
+  sheet.getRange(row, 3).setValue('% от всех');
+  styleHeader(row, 1, 3);
+  row++;
+
+  const actData = [
+    ['Активны за последние 7 дней', parseInt(activity.w7 || 0, 10)],
+    ['Активны за последние 30 дней', parseInt(activity.m30 || 0, 10)],
+    ['Никогда не заходили после регистрации', parseInt(activity.never || 0, 10)],
+  ];
+  const actBGs = [GREEN_BG, YELLOW_BG, RED_BG];
+
+  actData.forEach(([label, count], i) => {
+    sheet.getRange(row, 1).setValue(label);
+    sheet.getRange(row, 2).setValue(count).setFontWeight('bold');
+    sheet.getRange(row, 3).setValue(pct_(count, totalUsers) + '%');
+    sheet.getRange(row, 1, 1, 3).setBackground(actBGs[i]);
+    row++;
+  });
+  border(actHeaderRow, 1, actData.length + 1, 3);
+
+  // --- Топ событий из user_events ---
+  row += 2;
+  let eventRows = [];
+  try {
+    eventRows = turso_(
+      "SELECT event, COUNT(*) AS cnt FROM user_events GROUP BY event ORDER BY cnt DESC"
+    );
+  } catch (e) {
+    // таблица user_events ещё не создана — пропускаем
+  }
+
+  if (eventRows.length > 0) {
+    sheet.getRange(row, 1, 1, 2).merge().setValue('📋 События (всего за всё время)')
+      .setHorizontalAlignment('center');
+    styleHeader(row, 1, 2);
+    row++;
+    const evHeaderRow = row;
+    sheet.getRange(row, 1).setValue('Событие');
+    sheet.getRange(row, 2).setValue('Количество');
+    styleHeader(row, 1, 2);
+    row++;
+    eventRows.forEach(r => {
+      sheet.getRange(row, 1).setValue(r.event);
+      sheet.getRange(row, 2).setValue(parseInt(r.cnt, 10)).setFontWeight('bold');
+      row++;
+    });
+    border(evHeaderRow, 1, eventRows.length + 1, 2);
+  }
+
+  // --- Источники трафика (ref_source) ---
+  row += 2;
+  let sourceRows = [];
+  try {
+    sourceRows = turso_(
+      "SELECT COALESCE(ref_source, 'direct') AS src, COUNT(*) AS cnt " +
+      "FROM users GROUP BY src ORDER BY cnt DESC"
+    );
+  } catch (e) {
+    // колонка ещё не создана — пропускаем
+  }
+
+  if (sourceRows.length > 0) {
+    const srcTotal = sourceRows.reduce((s, r) => s + parseInt(r.cnt, 10), 0);
+    sheet.getRange(row, 1, 1, 3).merge().setValue('🔗 Источники трафика')
+      .setHorizontalAlignment('center');
+    styleHeader(row, 1, 3);
+    row++;
+    const srcHeaderRow = row;
+    sheet.getRange(row, 1).setValue('Источник');
+    sheet.getRange(row, 2).setValue('Пользователей');
+    sheet.getRange(row, 3).setValue('% от всех');
+    styleHeader(row, 1, 3);
+    row++;
+    sourceRows.forEach(r => {
+      const cnt = parseInt(r.cnt, 10);
+      sheet.getRange(row, 1).setValue(r.src);
+      sheet.getRange(row, 2).setValue(cnt).setFontWeight('bold');
+      sheet.getRange(row, 3).setValue(pct_(cnt, srcTotal) + '%');
+      row++;
+    });
+    border(srcHeaderRow, 1, sourceRows.length + 1, 3);
+  }
+
+  sheet.setColumnWidth(1, 280);
+  sheet.setColumnWidth(2, 150);
+  sheet.setColumnWidth(3, 200);
+  sheet.setColumnWidth(4, 200);
+  sheet.setFrozenRows(1);
+}
+
+function pct_(part, total) {
+  if (!total) return 0;
+  return Math.round((part / total) * 100);
 }

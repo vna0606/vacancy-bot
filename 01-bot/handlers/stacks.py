@@ -2,7 +2,8 @@ from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
-from db import get_user, upsert_user, update_stacks
+import json
+from db import get_user, upsert_user, update_stacks, update_last_seen, log_event
 
 router = Router()
 
@@ -129,4 +130,6 @@ async def cb_stack_save(callback: CallbackQuery):
         )
 
     await callback.message.edit_text(text)
+    await update_last_seen(tg_id)
+    await log_event(tg_id, "stack_changed", json.dumps(selected, ensure_ascii=False))
     await callback.answer("Сохранено!")

@@ -1,9 +1,10 @@
 import os
 from aiogram import Router, Bot, F
 from aiogram.filters import CommandStart
+from aiogram.filters.command import CommandObject
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
-from db import get_user, upsert_user, update_notify
+from db import get_user, upsert_user, update_notify, update_last_seen, log_event
 
 router = Router()
 
@@ -33,24 +34,28 @@ async def is_community_member(bot: Bot, tg_id: int) -> bool:
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, bot: Bot):
+async def cmd_start(message: Message, bot: Bot, command: CommandObject):
     tg_id = message.from_user.id
     username = message.from_user.username or ""
     full_name = message.from_user.full_name or ""
+    ref_source = command.args or None  # payload после /start, например "youtube"
 
     member = await is_community_member(bot, tg_id)
 
     user = await get_user(tg_id)
     if user is None:
-        await upsert_user(tg_id, username, full_name)
+        await upsert_user(tg_id, username, full_name, ref_source)
         await update_notify(tg_id, 1 if member else 0)
+        await log_event(tg_id, "start", ref_source or "direct")
     else:
-        await upsert_user(tg_id, username, full_name)
+        await upsert_user(tg_id, username, full_name)  # ref_source не перезаписываем
         # Реактивируем если вернулся в чат
         if member and not user.get("notify_enabled", 0):
             await update_notify(tg_id, 1)
         elif not member and user.get("notify_enabled", 0):
             await update_notify(tg_id, 0)
+        await log_event(tg_id, "start", "returning_user")
+    await update_last_seen(tg_id)
 
     # Одинаковое приветствие для всех
     await message.answer(
