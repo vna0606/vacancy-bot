@@ -2,6 +2,7 @@ import os
 import re
 import json
 from collections import Counter
+from pathlib import Path
 from aiogram import Router, Bot, F
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
@@ -12,6 +13,26 @@ from db import execute
 router = Router()
 
 ADMIN_TG_ID = int(os.getenv("ADMIN_TG_ID", "0"))
+MESSAGES_LOG = Path(__file__).parent.parent / "messages.log"
+
+
+def _log_incoming(message: Message):
+    user = message.from_user
+    entry = {
+        "ts": message.date.isoformat() if message.date else None,
+        "tg_id": user.id,
+        "username": user.username,
+        "full_name": user.full_name,
+        "type": message.content_type,
+        "text": message.text,
+        "caption": message.caption,
+    }
+    if message.sticker:
+        entry["sticker_emoji"] = message.sticker.emoji
+    if message.document:
+        entry["file_name"] = message.document.file_name
+    with open(MESSAGES_LOG, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 @router.message(Command("stats"), F.from_user.id == ADMIN_TG_ID)
@@ -86,12 +107,19 @@ async def catch_all(message: Message, bot: Bot):
     if not ADMIN_TG_ID:
         return
 
+    _log_incoming(message)
+
     user = message.from_user
     name = user.full_name or ""
     username = f"@{user.username}" if user.username else "без username"
 
     await bot.send_message(
         ADMIN_TG_ID,
-        f"📩 Сообщение от {name} {username} (id: {user.id}):\n\n«{message.text}»",
+        f"📩 Сообщение от {name} {username} (id: {user.id}):",
         parse_mode=None,
+    )
+    await bot.forward_message(
+        chat_id=ADMIN_TG_ID,
+        from_chat_id=message.chat.id,
+        message_id=message.message_id,
     )
