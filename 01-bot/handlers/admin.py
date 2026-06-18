@@ -16,6 +16,25 @@ ADMIN_TG_ID = int(os.getenv("ADMIN_TG_ID", "0"))
 MESSAGES_LOG = Path(__file__).parent.parent / "messages.log"
 
 
+def _describe_service_event(message: Message) -> str | None:
+    if message.new_chat_members:
+        names = ", ".join(u.full_name for u in message.new_chat_members)
+        return f"👋 Вступил(и) в чат: {names}"
+    if message.left_chat_member:
+        return f"🚪 Покинул чат: {message.left_chat_member.full_name}"
+    if message.new_chat_title:
+        return f"✏️ Новое название чата: {message.new_chat_title}"
+    if message.new_chat_photo:
+        return "🖼 Обновлено фото чата"
+    if message.delete_chat_photo:
+        return "🗑 Удалено фото чата"
+    if message.pinned_message:
+        return "📌 Закреплено сообщение в чате"
+    if message.group_chat_created:
+        return "✨ Группа создана"
+    return None
+
+
 def _log_incoming(message: Message):
     user = message.from_user
     entry = {
@@ -112,6 +131,16 @@ async def catch_all(message: Message, bot: Bot):
     user = message.from_user
     name = user.full_name or ""
     username = f"@{user.username}" if user.username else "без username"
+    chat_title = message.chat.title or str(message.chat.id)
+
+    event = _describe_service_event(message)
+    if event is not None:
+        await bot.send_message(
+            ADMIN_TG_ID,
+            f"ℹ️ {event}\nЧат: {chat_title}\nИнициатор: {name} {username} (id: {user.id})",
+            parse_mode=None,
+        )
+        return
 
     await bot.send_message(
         ADMIN_TG_ID,
