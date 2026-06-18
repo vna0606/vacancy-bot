@@ -56,6 +56,8 @@ async def main():
         )
         resp.raise_for_status()
 
+    print(f"[{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC] sent: total={total}, active={active}, new_users={new_users}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
