@@ -15,12 +15,12 @@ vacancy-bot/
 ├── 01-bot/
 │   ├── bot.py                      — точка входа: aiogram polling + APScheduler (ежедневный дайджест)
 │   ├── db.py                       — работа с Turso: CRUD пользователей (users)
-│   ├── weekly_digest.py            — еженедельный дайджест статистики: активные/отписавшиеся/новые пользователи
+│   ├── weekly_digest.py            — еженедельный дайджест статистики: активные/отписавшиеся/новые пользователи; логирует результат отправки через print в stdout
 │   ├── handlers/
 │   │   ├── start.py                — /start: регистрация, главное меню, обработчик "🔒 Закрытое сообщество"
 │   │   ├── stacks.py               — /mystacks: просмотр и изменение стека
 │   │   ├── settings.py             — /settings: управление уведомлениями
-│   │   └── admin.py                — /stats, relay: пересылка сообщений пользователей админу, ответ через бота, логирование в messages.log
+│   │   └── admin.py                — /stats, relay: пересылка сообщений пользователей админу, ответ через бота, логирование в messages.log; служебные события чата (new_chat_members и др.) расшифровываются в текст вместо пустой пересылки
 │   ├── requirements.txt            — aiogram, httpx, apscheduler, python-dotenv
 │   ├── .env                        — TELEGRAM_BOT_TOKEN, TURSO_URL, TURSO_TOKEN, NOTIFY_HOUR, NOTIFY_MINUTE, COMMUNITY_CHAT_ID, ADMIN_TG_ID
 │   ├── CLAUDE.md                   — граница ответственности этапа
@@ -48,8 +48,8 @@ vacancy-bot/
 3. **Нечёткое сопоставление стека**: сравнение `vacancies.direction` с `users.stacks` через `LOWER() + LIKE` — регистронезависимое, позволяет найти "python" в "Python Backend". Используются расширенные алиасы для маппинга технологий.
 4. **Встроенный scheduler в 01-bot**: bot.py запускает APScheduler параллельно с polling. По cron-расписанию `mon-fri hour=NOTIFY_HOUR, minute=NOTIFY_MINUTE` запускает `02-notifier/notifier.py` как subprocess. По умолчанию рассылка настроена на 13:00 UTC (16:00 MSK).
 5. **Кнопка сообщества**: в главном меню добавлена persistent-кнопка "🔒 Закрытое сообщество". Обработчик `cmd_community` в `start.py` отвечает описанием и InlineKeyboardButton с URL `https://boosty.to/ulbitv?utm_source=vac_bot`.
-6. **Admin relay с форвардингом и логированием**: `handlers/admin.py` перехватывает все входящие сообщения пользователей (текст, стикеры, документы, медиа). Функция `_log_incoming()` пишет JSONL-запись в `01-bot/messages.log` (поля: ts, tg_id, username, full_name, type, text, caption, sticker_emoji, file_name). Затем отправляет текстовый заголовок и форвардит оригинальное сообщение через `bot.forward_message()` — сохраняет форматирование и медиа. Ответ администратора через reply в боте пересылается обратно пользователю.
-7. **Статистика `/stats` и еженедельный дайджест**: команда `/stats` в `admin.py` (доступна только ADMIN_TG_ID) выводит воронку: всего зарегистрировано / активных (notifications=1) / отписавшихся / новых за неделю, источники трафика и причины отключений. `weekly_digest.py` — отдельный скрипт для еженедельного дайджеста тех же метрик. Данные агрегируются из таблицы `users` в Turso. Google Apps Script дашборд (`apps_script_dashboard.gs`) визуализирует эти данные в Google Sheets.
+6. **Admin relay с форвардингом и логированием**: `handlers/admin.py` перехватывает все входящие сообщения пользователей (текст, стикеры, документы, медиа). Функция `_log_incoming()` пишет JSONL-запись в `01-bot/messages.log` (поля: ts, tg_id, username, full_name, type, text, caption, sticker_emoji, file_name). Затем отправляет текстовый заголовок и форвардит оригинальное сообщение через `bot.forward_message()` — сохраняет форматирование и медиа. Служебные события чата (new_chat_members, left_chat_member и др.) расшифровываются в читаемый текст вместо пустого форварда. Ответ администратора через reply в боте пересылается обратно пользователю.
+7. **Статистика `/stats` и еженедельный дайджест**: команда `/stats` в `admin.py` (доступна только ADMIN_TG_ID) выводит воронку: всего зарегистрировано / активных (notifications=1) / отписавшихся / новых за неделю, источники трафика и причины отключений. `weekly_digest.py` — отдельный скрипт для еженедельного дайджеста тех же метрик; после отправки логирует результат в stdout: `[YYYY-MM-DD HH:MM:SS UTC] sent: total=, active=, new_users=`. Данные агрегируются из таблицы `users` в Turso. Google Apps Script дашборд (`apps_script_dashboard.gs`) визуализирует эти данные в Google Sheets.
 
 # Ecosystem Map
 
@@ -73,22 +73,23 @@ vacancy-bot/
 | `technarei-stats` | Сбор и визуализация статистики сообщества Текнари в Google Sheets | Python, Google Sheets API, Google Apps Script | Данные сообщества Текнари | Dashboard в Google Sheets |
 | `weekly-digest` | Ежедневная и еженедельная рассылка контент-плана из Notion в Telegram (включая персональный дайджест для Тимура) | Python, Notion API, Telegram Bot API, cron | База данных Notion с контент-планом | Дайджест-сообщения в Telegram |
 | `health-monitor` | Ежедневный мониторинг всех автоматизаций (cron + GitHub Actions) | Python, GitHub API, Telegram Bot API | crontab, логи, GitHub Actions runs | Отчёт о состоянии автоматизаций в Telegram |
+| `client-content-assistant` | Персональный AI-ассистент для клиентов по созданию контента (онбординг, захват идей, анализ, ревью, синхронизация с Notion) | Python (aiogram), Claude CLI, Groq API (транскрибация), Notion API, SQLite (Turso replica) | Голосовые/текстовые сообщения клиента в Telegram, стратегия клиента (strategy.md) | Идеи и контент в Notion, аналитика и ревью в Telegram |
 
 ## Общие интеграции
 Сервисы которые используются в нескольких проектах:
 
 | Сервис | Используется в |
 |--------|---------------|
-| **Turso (libSQL cloud)** | `it-vacancies-base`, `vacancy-bot`, `mood-diary`, `outreach-system`, `content-brain` |
-| **Telegram API / Bot API** | `it-vacancies-base`, `vacancy-bot`, `outreach-system`, `tg-business-bot`, `notion-pm`, `finance-tracker`, `content-brain`, `audio-transcriber`, `tekhnari-agent`, `weekly-digest`, `health-monitor` |
+| **Turso (libSQL cloud)** | `it-vacancies-base`, `vacancy-bot`, `mood-diary`, `outreach-system`, `content-brain`, `client-content-assistant` |
+| **Telegram API / Bot API** | `it-vacancies-base`, `vacancy-bot`, `outreach-system`, `tg-business-bot`, `notion-pm`, `finance-tracker`, `content-brain`, `audio-transcriber`, `tekhnari-agent`, `weekly-digest`, `health-monitor`, `client-content-assistant` |
 | **Telethon (MTProto)** | `it-vacancies-base` (parser), `outreach-system` (parser/sender), `content-brain` (парсинг @nikbase), `tekhnari-agent` (импорт истории) |
 | **OpenAI API** | `it-vacancies-base`, `outreach-system` |
-| **Notion API** | `outreach-system` (CRM), `notion-pm` (проекты), `tg-business-bot` (CRM), `task-distributor`, `meeting-transcription` (публикация встреч), `weekly-digest` (контент-план), `tekhnari-agent` (контент-календарь) |
-| **Google Sheets API** | `outreach-system` (база контактов), `agent-teams` (skill: google-sheets), `technarei-stats` (dashboard), `vacancy-bot` (apps_script_dashboard.gs) |
+| **Notion API** | `outreach-system` (CRM), `notion-pm` (проекты), `tg-business-bot` (CRM), `task-distributor`, `meeting-transcription` (публикация встреч), `weekly-digest` (контент-план), `tekhnari-agent` (контент-календарь), `client-content-assistant` (синхронизация идей/контента) |
+| **Google Sheets API** | `outreach-system` (база контактов), `agent-teams` (skill: google-sheets), `technarei-stats` (dashboard) |
 | **Google Apps Script** | `vacancy-bot` (apps_script_dashboard.gs), `technarei-stats` (dashboard.gs) |
 | **Gemini CLI** | `tg-business-bot` (ответы), `notion-pm` (анализ идей) |
-| **Claude CLI / Code** | `task-distributor` (саммари), `agent-teams` (основа), `notion-pm` (планирование), `content-brain` (анализ смыслов, генерация постов), `tekhnari-agent` (анализ сообщества, генерация контента) |
-| **Groq API (whisper-large-v3)** | `claude-bot`, `audio-transcriber` (@assist_nik_bot), `notion-pm`, `meeting-transcription` (quick mode), `content-brain` (транскрипция голосовых @nikbase) — основной ASR, 1-й приоритет |
+| **Claude CLI / Code** | `task-distributor` (саммари), `agent-teams` (основа), `notion-pm` (планирование), `content-brain` (анализ смыслов, генерация постов), `tekhnari-agent` (анализ сообщества, генерация контента), `client-content-assistant` (анализ и генерация контента) |
+| **Groq API (whisper-large-v3)** | `claude-bot`, `audio-transcriber` (@assist_nik_bot), `notion-pm`, `meeting-transcription` (quick mode), `content-brain` (транскрипция голосовых @nikbase), `client-content-assistant` (транскрибация голосовых) — основной ASR, 1-й приоритет |
 | **faster-whisper medium (Finland VPS)** | `claude-bot`, `audio-transcriber`, `notion-pm`, `meeting-transcription` (quick mode) — 2-й приоритет, fallback |
 | **Deepgram** | `task-distributor` (ASR), `mood-diary` (голос), `notion-pm` (захват идей), `meeting-transcription` (основной ASR full mode), `tekhnari-agent` (транскрибация записей встреч) |
 | **NotebookLM (nlm CLI)** | `content-brain` (семантический поиск по дневнику и каналу) |
@@ -101,9 +102,9 @@ vacancy-bot/
 | `TURSO_MOOD_URL` / `TURSO_MOOD_TOKEN` | mood-diary, content-brain (read-only) |
 | `TURSO_CONTENT_BRAIN_URL` / `TURSO_CONTENT_BRAIN_TOKEN` | content-brain |
 | `TELEGRAM_API_ID` / `HASH` | it-vacancies-base, outreach-system, content-brain (33361321 / 67a7d...) |
-| `TELEGRAM_BOT_TOKEN` | it-vacancies-base, vacancy-bot, tg-business-bot, notion-pm, finance-tracker, weekly-digest |
-| `NOTION_TOKEN` | outreach-system, task-distributor, notion-pm, tg-business-bot, meeting-transcription, weekly-digest, tekhnari-agent |
-| `GROQ_API_KEY` | claude-bot, audio-transcriber, notion-pm, meeting-transcription, content-brain |
+| `TELEGRAM_BOT_TOKEN` | it-vacancies-base, vacancy-bot, tg-business-bot, notion-pm, finance-tracker, weekly-digest, client-content-assistant |
+| `NOTION_TOKEN` | outreach-system, task-distributor, notion-pm, tg-business-bot, meeting-transcription, weekly-digest, tekhnari-agent, client-content-assistant |
+| `GROQ_API_KEY` | claude-bot, audio-transcriber, notion-pm, meeting-transcription, content-brain, client-content-assistant |
 | `DEEPGRAM_API_KEY` | task-distributor, meeting-transcription, tekhnari-agent |
 | `GITHUB_TOKEN` | health-monitor |
 
@@ -202,6 +203,20 @@ vacancy-bot/
 │ (crontab + GH Actions   │
 │  → Telegram отчёт)      │
 └─────────────────────────┘
+
+ Голос/текст клиента (TG)
+         │
+         ▼
+┌─────────────────────────┐
+│  client-content-        │
+│  assistant              │
+│ Onboard→Capture→        │
+│ Analyze→Review→Sync     │
+└──────────┬──────────────┘
+           │ идеи и контент
+           ▼
+    Notion (клиентское
+    пространство)
 ```
 
 
@@ -234,6 +249,7 @@ vacancy-bot/
 | `mood-diary` | через `claude-bot` | ✅ Groq → Finland → local base |
 | `tekhnari-agent` | разовый скрипт / Deepgram | Deepgram (без fallback — транскрибация встреч) |
 | `content-brain` (01-knowledge-base) | разовый скрипт | Groq (без fallback — разовая индексация) |
+| `client-content-assistant` | отдельный сервис | Groq (основной ASR для голосовых сообщений клиента) |
 
 **Связь audio-transcriber и meeting-transcription:**
 Оба используют токен @assist_nik_bot (`8380755935`). `audio-transcriber` — aiogram polling, принимает сообщения от пользователя. `transcribe-server` — Flask API на порту 5055, принимает файлы через API/incoming/ и отправляет результаты через тот же токен.
@@ -270,6 +286,7 @@ vacancy-bot/
 - **technarei-stats**: Сбор статистики сообщества Текнари с выгрузкой в Google Sheets (03-sheets). Google Apps Script dashboard (`dashboard.gs`) для визуализации.
 - **weekly-digest**: Четыре cron-скрипта для ежедневной и еженедельной рассылки контент-плана из Notion в Telegram (06:00 UTC ежедневно, 05:50 UTC по понедельникам). Включает персональный дайджест для Тимура (`timur_daily.py`, `timur_weekly.py`).
 - **health-monitor**: Ежедневный мониторинг в 12:00 МСК. Сканирует crontab, проверяет логи и GitHub Actions, сравнивает с предыдущим состоянием (state.json), отправляет отчёт в Telegram.
+- **client-content-assistant**: Персональный AI-ассистент для клиентов (первый клиент — Тимур). Модули: онбординг, захват идей (текст/голос), анализ контента, ревью, синхронизация с персональным Notion-пространством клиента. Конфигурация клиентов хранится в `clients/<name>/notion_config.json` и `strategy.md`. Использует Turso replica для локального хранения сессий и истории.
 
 ## Известные особенности и ограничения
 - Шаг синхронизации `04-sync` (it-vacancies-base → Turso) не реализован в репозитории — без него vacancies в Turso не появятся.
@@ -278,10 +295,11 @@ vacancy-bot/
 - Использование `HTML` parse mode для форматирования сообщений с вакансиями.
 - Фикс `AsyncIOScheduler`: корутина передается напрямую во избежание `RuntimeError: no running event loop`.
 - `COMMUNITY_URL` захардкожен в `01-bot/handlers/start.py` как `https://boosty.to/ulbitv?utm_source=vac_bot` — при смене ссылки менять там.
-- Admin relay (`handlers/admin.py`) активен для всех входящих сообщений, не обработанных другими handlers. Форвардит оригинальное сообщение через `bot.forward_message()` — сохраняет медиа, стикеры, документы. Все входящие логируются в `01-bot/messages.log` (JSONL). `ADMIN_TG_ID` задаётся в `.env` — без него пересылка и логирование молча пропускаются.
+- Admin relay (`handlers/admin.py`) активен для всех входящих сообщений, не обработанных другими handlers. Форвардит оригинальное сообщение через `bot.forward_message()` — сохраняет медиа, стикеры, документы. Служебные события чата (new_chat_members, left_chat_member и др.) не форвардятся — расшифровываются в текстовое описание и отправляются напрямую. Все входящие логируются в `01-bot/messages.log` (JSONL). `ADMIN_TG_ID` задаётся в `.env` — без него пересылка и логирование молча пропускаются.
 - `/stats` доступна только пользователю с `ADMIN_TG_ID`. Данные берутся из таблицы `users` в Turso — агрегируются прямо в запросе.
 
 ## История изменений
+- 2026-06-21 — мелкие улучшения надёжности: `weekly_digest.py` логирует результат отправки в stdout (`[UTC] sent: total=, active=, new_users=`); `handlers/admin.py` расшифровывает служебные события чата (new_chat_members, left_chat_member и др.) в текстовое описание вместо пустого форварда.
 - 2026-06-14 — статистика и аналитика бота: команда `/stats` в `admin.py` (воронка, источники трафика, причины отключений), `weekly_digest.py` для еженедельного дайджеста метрик, `apps_script_dashboard.gs` для Google Sheets дашборда. Admin relay переведён на `bot.forward_message()` (поддержка нетекстовых сообщений) и логирование всех входящих в `01-bot/messages.log` (JSONL) через `_log_incoming()`.
 - 2026-06-07 — добавлен admin relay (`01-bot/handlers/admin.py`): входящие сообщения пользователей пересылаются администратору (ADMIN_TG_ID), ответ через reply возвращается пользователю. Удалён `01-bot/.env.example`.
 - 2026-06-02 — добавлена кнопка "🔒 Закрытое сообщество" в главное меню (`start.py`): persistent ReplyKeyboardButton + обработчик `cmd_community` с InlineKeyboardButton-ссылкой на Boosty (`COMMUNITY_URL`). Ссылка на сообщество также добавлена в `JOIN_COMMUNITY_TEXT` в `stacks.py`.
