@@ -8,11 +8,20 @@ from db import get_user, upsert_user, update_notify, update_last_seen, log_event
 
 router = Router()
 
+MAIN_MENU_BUTTON_TEXTS = {
+    "⚙️ Настроить стек",
+    "🔔 Уведомления",
+    "👤 Мой профиль",
+    "🔒 Закрытое сообщество",
+    "📨 Разместить вакансию",
+    "❤️ Поддержать",
+}
+
 MAIN_MENU = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="⚙️ Настроить стек"), KeyboardButton(text="🔔 Уведомления")],
-        [KeyboardButton(text="👤 Мой профиль")],
-        [KeyboardButton(text="🔒 Закрытое сообщество")],
+        [KeyboardButton(text="👤 Мой профиль"), KeyboardButton(text="📨 Разместить вакансию")],
+        [KeyboardButton(text="🔒 Закрытое сообщество"), KeyboardButton(text="❤️ Поддержать")],
     ],
     resize_keyboard=True,
     persistent=True,
