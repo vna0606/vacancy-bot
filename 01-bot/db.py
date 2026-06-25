@@ -113,6 +113,59 @@ async def update_last_seen(tg_id: int):
     )
 
 
+async def insert_vacancy(
+    title: str, company: str, hr_contact: str, salary: str,
+    work_format: str, telegraph_url: str, direction: str, category: str,
+    dedup_key: str,
+):
+    # raw_post_id=0 не существует в raw_posts (FK на эту таблицу) — для вакансий из бота
+    # FK-проверку нужно отключить на время INSERT, как и в it-vacancies-base/admin_bot.py.
+    # dedup_key — тот же алгоритм, что у it-vacancies-base (vacancy_dedup.py), чтобы автопайплайн
+    # видел вакансии, добавленные через бота, при своей проверке на дубликаты.
+    args = [title, company, hr_contact, salary, work_format, telegraph_url, direction, category, dedup_key]
+    payload = {
+        "requests": [
+            {"type": "execute", "stmt": {"sql": "PRAGMA foreign_keys = OFF"}},
+            {
+                "type": "execute",
+                "stmt": {
+                    "sql": (
+                        "INSERT INTO vacancies "
+                        "(raw_post_id, title, company_name, recruiter_contact, "
+                        "salary, work_format, telegraph_url, direction, category, dedup_key) "
+                        "VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    ),
+                    "args": [_arg(a) for a in args],
+                },
+            },
+            {"type": "execute", "stmt": {"sql": "PRAGMA foreign_keys = ON"}},
+            {"type": "close"},
+        ]
+    }
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(PIPELINE_URL, headers=HEADERS, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        for result in data["results"]:
+            if result["type"] == "error":
+                raise RuntimeError(f"Turso error: {result['error']}")
+
+
+async def find_duplicate_vacancy(dedup_key: str, days: int = 7):
+    """Возвращает последнюю вакансию с тем же dedup_key за {days} дней, либо None."""
+    result = await execute(
+        "SELECT id, title, telegraph_url FROM vacancies "
+        "WHERE dedup_key = ? AND created_at >= datetime('now', ?) "
+        "ORDER BY id DESC LIMIT 1",
+        [dedup_key, f"-{days} days"],
+    )
+    rows = result.get("rows", [])
+    if not rows:
+        return None
+    cols = [c["name"] for c in result["cols"]]
+    return dict(zip(cols, [v["value"] if v["type"] != "null" else None for v in rows[0]]))
+
+
 async def log_event(tg_id: int, event: str, payload: str = None):
     await execute(
         "INSERT INTO user_events (tg_id, event, payload) VALUES (?, ?, ?)",
