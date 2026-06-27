@@ -173,12 +173,63 @@ async def log_event(tg_id: int, event: str, payload: str = None):
     )
 
 
+async def log_vacancy_submission_pending(tg_id: int) -> int:
+    """Записывает заявку на вакансию со статусом 'pending' и обновляет счётчик в users.
+    Возвращает id строки в vacancy_submissions."""
+    payload = {
+        "requests": [
+            {
+                "type": "execute",
+                "stmt": {
+                    "sql": "INSERT INTO vacancy_submissions (tg_id, status) VALUES (?, 'pending')",
+                    "args": [_arg(tg_id)],
+                },
+            },
+            {
+                "type": "execute",
+                "stmt": {"sql": "SELECT last_insert_rowid()"},
+            },
+            {
+                "type": "execute",
+                "stmt": {
+                    "sql": (
+                        "UPDATE users SET "
+                        "vacancy_submitted_at = COALESCE(vacancy_submitted_at, CURRENT_TIMESTAMP), "
+                        "vacancy_submit_count = vacancy_submit_count + 1 "
+                        "WHERE tg_id = ?"
+                    ),
+                    "args": [_arg(tg_id)],
+                },
+            },
+            {"type": "close"},
+        ]
+    }
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(PIPELINE_URL, headers=HEADERS, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        for result in data["results"]:
+            if result["type"] == "error":
+                raise RuntimeError(f"Turso error: {result['error']}")
+        rowid_result = data["results"][1]["response"]["result"]
+        return int(rowid_result["rows"][0][0]["value"])
+
+
+async def update_vacancy_submission_status(submission_db_id: int, status: str):
+    await execute(
+        "UPDATE vacancy_submissions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        [status, submission_db_id],
+    )
+
+
 async def init_analytics_schema():
     for col_sql in [
         "ALTER TABLE users ADD COLUMN last_seen_at TIMESTAMP",
         "ALTER TABLE users ADD COLUMN disabled_reason TEXT",
         "ALTER TABLE users ADD COLUMN stacks_set_at TIMESTAMP",
         "ALTER TABLE users ADD COLUMN ref_source TEXT",
+        "ALTER TABLE users ADD COLUMN vacancy_submitted_at TIMESTAMP",
+        "ALTER TABLE users ADD COLUMN vacancy_submit_count INTEGER NOT NULL DEFAULT 0",
     ]:
         try:
             await execute(col_sql)
@@ -191,5 +242,14 @@ async def init_analytics_schema():
             event      TEXT NOT NULL,
             payload    TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )"""
+    )
+    await execute(
+        """CREATE TABLE IF NOT EXISTS vacancy_submissions (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            tg_id        INTEGER NOT NULL,
+            status       TEXT NOT NULL,
+            submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )"""
     )

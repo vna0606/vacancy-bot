@@ -10,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
-from db import insert_vacancy, find_duplicate_vacancy
+from db import insert_vacancy, find_duplicate_vacancy, log_vacancy_submission_pending, update_vacancy_submission_status
 from vacancy_filter import classify
 from vacancy_llm_filter import classify_uncertain
 from vacancy_formatter import format_vacancy
@@ -256,6 +256,14 @@ async def cb_submit_yes(callback: CallbackQuery, state: FSMContext, bot: Bot):
     telegraph_url = data["telegraph_url"]
     dedup_key = data["dedup_key"]
 
+    tg_id = callback.from_user.id
+
+    try:
+        submission_db_id = await log_vacancy_submission_pending(tg_id)
+    except Exception as e:
+        logger.warning("Failed to log vacancy submission for tg_id=%s: %s", tg_id, e)
+        submission_db_id = None
+
     if VACANCY_AUTO_PUBLISH:
         await insert_vacancy(
             title=title, company=summary["company"], hr_contact=summary["hr_contact"],
@@ -263,6 +271,11 @@ async def cb_submit_yes(callback: CallbackQuery, state: FSMContext, bot: Bot):
             telegraph_url=telegraph_url, direction=direction, category=category,
             dedup_key=dedup_key,
         )
+        if submission_db_id:
+            try:
+                await update_vacancy_submission_status(submission_db_id, "approved")
+            except Exception as e:
+                logger.warning("Failed to update submission status: %s", e)
         await callback.message.edit_text(
             _card_text(title, summary, telegraph_url)
             + "\n\n✅ Вакансия сохранена, попадёт в следующую рассылку.",
@@ -273,7 +286,8 @@ async def cb_submit_yes(callback: CallbackQuery, state: FSMContext, bot: Bot):
 
     submission_id = next(_submission_seq)
     _pending_moderation[submission_id] = {
-        "tg_id": callback.from_user.id,
+        "tg_id": tg_id,
+        "submission_db_id": submission_db_id,
         "title": title, "category": category, "direction": direction,
         "summary": summary, "telegraph_url": telegraph_url, "dedup_key": dedup_key,
     }
@@ -312,6 +326,11 @@ async def cb_mod_approve(callback: CallbackQuery, bot: Bot):
         telegraph_url=data["telegraph_url"], direction=data["direction"], category=data["category"],
         dedup_key=data["dedup_key"],
     )
+    if data.get("submission_db_id"):
+        try:
+            await update_vacancy_submission_status(data["submission_db_id"], "approved")
+        except Exception as e:
+            logger.warning("Failed to update submission status: %s", e)
     card = _card_text(data["title"], summary, data["telegraph_url"])
     await callback.message.edit_text(card + "\n\n✅ Одобрено", disable_web_page_preview=True)
     await callback.answer("Сохранено")
@@ -330,6 +349,11 @@ async def cb_mod_reject(callback: CallbackQuery, bot: Bot):
         await callback.answer("Заявка уже обработана.")
         return
 
+    if data.get("submission_db_id"):
+        try:
+            await update_vacancy_submission_status(data["submission_db_id"], "rejected")
+        except Exception as e:
+            logger.warning("Failed to update submission status: %s", e)
     card = _card_text(data["title"], data["summary"], data["telegraph_url"])
     await callback.message.edit_text(card + "\n\n❌ Отклонено", disable_web_page_preview=True)
     await callback.answer("Отклонено")

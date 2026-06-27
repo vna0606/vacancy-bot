@@ -30,23 +30,41 @@
 
 ```sql
 CREATE TABLE IF NOT EXISTS users (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    tg_id           INTEGER UNIQUE NOT NULL,
-    username        TEXT,
-    full_name       TEXT,
-    stacks          TEXT NOT NULL DEFAULT '',   -- JSON-массив: ["Python","Backend"]
-    notify_enabled  INTEGER NOT NULL DEFAULT 1,
-    notify_hour     INTEGER,
-    ref_source      TEXT,                       -- payload из /start (например "youtube")
-    disabled_reason TEXT,                        -- 'manual' / 'blocked' / 'non_member'
-    last_seen_at    TIMESTAMP,
-    stacks_set_at   TIMESTAMP,
-    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    tg_id                  INTEGER UNIQUE NOT NULL,
+    username               TEXT,
+    full_name              TEXT,
+    stacks                 TEXT NOT NULL DEFAULT '',   -- JSON-массив: ["Python","Backend"]
+    notify_enabled         INTEGER NOT NULL DEFAULT 1,
+    notify_hour            INTEGER,
+    ref_source             TEXT,                       -- payload из /start (например "youtube")
+    disabled_reason        TEXT,                       -- 'manual' / 'blocked' / 'non_member'
+    last_seen_at           TIMESTAMP,
+    stacks_set_at          TIMESTAMP,
+    vacancy_submitted_at   TIMESTAMP,                  -- когда впервые подал заявку на вакансию
+    vacancy_submit_count   INTEGER NOT NULL DEFAULT 0, -- сколько раз подавал заявок
+    created_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
 Не менять схему без обновления корневого `CLAUDE.md` и `02-notifier/CLAUDE.md`.
+
+### Таблица `vacancy_submissions` (пишет и читает только этот этап)
+
+```sql
+CREATE TABLE IF NOT EXISTS vacancy_submissions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    tg_id        INTEGER NOT NULL,
+    status       TEXT NOT NULL,   -- 'pending' / 'approved' / 'rejected'
+    submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+Фиксирует каждую заявку на вакансию и её итог. Используется для сегментации при рассылках
+(кто подавал, кто одобрен, кто отклонён). Поля `vacancy_submitted_at` и `vacancy_submit_count`
+в `users` — агрегаты для быстрой фильтрации без JOIN с этой таблицей.
 
 ### Таблица `vacancies` (пишет этот этап ПОСЛЕ одобрения админом; также пишет `it-vacancies-base`, читает `02-notifier`)
 

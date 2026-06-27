@@ -66,19 +66,21 @@ CREATE TABLE IF NOT EXISTS vacancies (
 
 ```sql
 CREATE TABLE IF NOT EXISTS users (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    tg_id           INTEGER UNIQUE NOT NULL,
-    username        TEXT,
-    full_name       TEXT,
-    stacks          TEXT NOT NULL DEFAULT '',   -- JSON-массив строк: ["Python","Backend"]
-    notify_enabled  INTEGER NOT NULL DEFAULT 1, -- 1 = уведомления включены
-    notify_hour     INTEGER,
-    ref_source      TEXT,                        -- payload из /start
-    disabled_reason TEXT,                         -- 'manual' / 'blocked' / 'non_member'
-    last_seen_at    TIMESTAMP,
-    stacks_set_at   TIMESTAMP,
-    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    tg_id                  INTEGER UNIQUE NOT NULL,
+    username               TEXT,
+    full_name              TEXT,
+    stacks                 TEXT NOT NULL DEFAULT '',   -- JSON-массив строк: ["Python","Backend"]
+    notify_enabled         INTEGER NOT NULL DEFAULT 1, -- 1 = уведомления включены
+    notify_hour            INTEGER,
+    ref_source             TEXT,                       -- payload из /start
+    disabled_reason        TEXT,                       -- 'manual' / 'blocked' / 'non_member'
+    last_seen_at           TIMESTAMP,
+    stacks_set_at          TIMESTAMP,
+    vacancy_submitted_at   TIMESTAMP,                  -- когда впервые подал заявку на вакансию
+    vacancy_submit_count   INTEGER NOT NULL DEFAULT 0, -- сколько раз подавал заявок
+    created_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
