@@ -1,6 +1,5 @@
 import asyncio
 import html
-import os
 from aiogram import Bot
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
@@ -10,53 +9,24 @@ from db import get_active_users, get_fresh_vacancies, get_sent_ids, mark_sent, d
 
 MAX_PER_USER = 999
 
-COMMUNITY_CHAT_ID = os.getenv("COMMUNITY_CHAT_ID", "")
-
-NOT_MEMBER_TEXT = (
-    "🔒 Этот бот присылает вакансии только членам нашего закрытого сообщества.\n\n"
-    "Чтобы продолжить получать подборки вакансий, продлите свою подписку "
-    "и отправьте боту команду /start — после этого вы продолжите получать подборки."
-)
-
-STACK_ALIASES = {
-    "ML/AI": ["ml", "ai", "machine learning", "deep learning", "nlp", "llm", "data science",
-              "ии", "искусственный интеллект", "машинное обучение", "нейро", "нлп", "компьютерное зрение"],
-    "Mobile": ["mobile", "ios", "android", "flutter", "react native", "swift", "kotlin"],
-    "FullStack": ["fullstack", "full stack", "full-stack"],
-    "DevOps": ["devops", "sre", "infrastructure", "kubernetes", "k8s", "devops", "девопс"],
-    "QA": ["qa", "quality assurance", "тестировщик", "тестирование"],
-    "Data": ["data", "аналитик", "analyst"],
-    "Backend": ["backend", "back-end", "back end", "python", "java ", "golang", "go ",
-                "node.js", "nodejs", "ruby", "php", "scala", "rust", "c#", ".net",
-                "бэкенд", "бэк"],
-    "Frontend": ["frontend", "front-end", "front end", "react", "vue", "angular",
-                 "javascript", "typescript", "фронтенд", "фронт"],
+# direction — канонический enum из vacancy_formatter.py (01-bot и it-vacancies-base
+# используют один и тот же классификатор), поэтому сравниваем точным равенством,
+# а не подстрокой: подстрочный поиск по title ловил "QA Fullstack" в FullStack и т.п.
+STACK_TO_DIRECTION = {
+    "Backend": "backend",
+    "Frontend": "frontend",
+    "FullStack": "fullstack",
+    "Mobile": "mobile",
+    "DevOps": "devops",
+    "ML/AI": "ml",
+    "Data": "data",
+    "QA": "qa",
 }
-
-
-async def is_community_member(bot: Bot, tg_id: int) -> bool:
-    if not COMMUNITY_CHAT_ID:
-        return True
-    try:
-        member = await bot.get_chat_member(COMMUNITY_CHAT_ID, tg_id)
-        return member.status in ("member", "creator", "administrator", "restricted")
-    except Exception as e:
-        print(f"[access] check failed for {tg_id}: {e}")
-        return True  # при ошибке API не отключаем пользователя
 
 
 def _vacancy_matches(vacancy: dict, stacks: list) -> bool:
     direction = (vacancy.get("direction") or "").lower()
-    title = (vacancy.get("title") or "").lower()
-    text = direction + " " + title
-
-    for stack in stacks:
-        if stack.lower() in text:
-            return True
-        for alias in STACK_ALIASES.get(stack, []):
-            if alias in text:
-                return True
-    return False
+    return any(STACK_TO_DIRECTION.get(stack) == direction for stack in stacks)
 
 
 def _esc(text: str) -> str:
@@ -96,16 +66,6 @@ async def run_digest(bot_token: str, lookback_hours: int):
             tg_id = user["tg_id"]
             stacks = user.get("stacks") or []
             if not stacks:
-                continue
-
-            # Проверяем членство в сообществе
-            if not await is_community_member(bot, tg_id):
-                print(f"[notifier] tg_id={tg_id} not in community — disabling")
-                await disable_user(tg_id, reason="non_member")
-                try:
-                    await bot.send_message(tg_id, NOT_MEMBER_TEXT)
-                except Exception:
-                    pass
                 continue
 
             sent_ids = await get_sent_ids(tg_id)

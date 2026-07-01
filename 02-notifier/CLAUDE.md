@@ -23,7 +23,12 @@ FROM vacancies
 WHERE created_at >= datetime('now', '-1 day')
 ```
 
-Поле `direction` — строка, сравниваем с элементами массива `users.stacks` через LOWER + LIKE.
+Поле `direction` — канонический enum (`backend/frontend/fullstack/mobile/qa/devops/data/ml/
+security/embedded/other`), одинаковый у обоих писателей (`vacancy_formatter.py` в 01-bot и
+it-vacancies-base используют идентичный список). Сравниваем ТОЧНЫМ равенством через
+`STACK_TO_DIRECTION` (`sender.py`), а не подстрокой и не по `title` — подстрочный поиск по
+`title` ложно матчил, например, "QA Fullstack" вакансии (direction=qa) пользователям со
+стеком FullStack.
 
 ### Таблица `users` (пишет 01-bot)
 
@@ -76,8 +81,8 @@ CREATE TABLE IF NOT EXISTS sent_notifications (
 
 - Запуск: либо `python notifier.py` по cron (проще), либо APScheduler внутри процесса
 - Рекомендуется cron-запуск: каждый день в 09:00 UTC (или настраивается через .env)
-- Сопоставление direction ↔ stacks: регистронезависимое, нечёткое (содержит подстроку)
-  Пример: direction="Python Backend" совпадает со stack="Python"
+- Сопоставление direction ↔ stacks: точное равенство через `STACK_TO_DIRECTION` в `sender.py`
+  (direction — канонический enum, а не свободный текст) — НЕ substring, НЕ по `title`
 - Батчинг: если у пользователя > 5 вакансий — отправить несколькими сообщениями по 5
 - Rate limiting: пауза 50ms между отправками, чтобы не упереться в лимиты Telegram
 - При TelegramForbiddenError (бот заблокирован): UPDATE users SET notify_enabled=0

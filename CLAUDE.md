@@ -74,7 +74,12 @@ CREATE TABLE IF NOT EXISTS users (
     notify_enabled         INTEGER NOT NULL DEFAULT 1, -- 1 = уведомления включены
     notify_hour            INTEGER,
     ref_source             TEXT,                       -- payload из /start
-    disabled_reason        TEXT,                       -- 'manual' / 'blocked' / 'non_member'
+    disabled_reason        TEXT,                       -- 'manual' / 'blocked'
+    community_member       INTEGER NOT NULL DEFAULT 0, -- состоит ли сейчас в закрытом сообществе
+                                                        -- НЕ влияет на notify_enabled — рассылка
+                                                        -- идёт всем независимо от членства;
+                                                        -- поле зарезервировано под будущую
+                                                        -- premium-рассылку для членов сообщества
     last_seen_at           TIMESTAMP,
     stacks_set_at          TIMESTAMP,
     vacancy_submitted_at   TIMESTAMP,                  -- когда впервые подал заявку на вакансию
@@ -85,7 +90,10 @@ CREATE TABLE IF NOT EXISTS users (
 ```
 
 Поле `stacks` хранится как JSON-строка: `["Python", "Backend"]`.
-Сопоставление с `vacancies.direction` — регистронезависимое, нечёткое (LOWER + LIKE).
+Сопоставление с `vacancies.direction` — точное равенство через словарь `STACK_TO_DIRECTION`
+в `02-notifier/sender.py` (`direction` — канонический enum из `vacancy_formatter.py`, а не
+свободный текст, поэтому нечёткое сравнение не нужно и создавало ложные срабатывания
+вроде "QA Fullstack" → стек FullStack).
 
 ### Таблица `sent_notifications` (пишет 02-notifier, читает 02-notifier)
 
