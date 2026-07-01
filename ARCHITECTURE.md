@@ -15,8 +15,10 @@ vacancy-bot/
 ├── apps_script_dashboard.gs        — Google Apps Script дашборд статистики бота
 ├── 01-bot/
 │   ├── bot.py                      — точка входа: aiogram polling + APScheduler (ежедневный дайджест)
-│   ├── db.py                       — работа с Turso: CRUD пользователей, вакансий, vacancy_submissions, аналитика
+│   ├── db.py                       — работа с Turso: CRUD пользователей, вакансий, vacancy_submissions, аналитика; update_community_status()
 │   ├── weekly_digest.py            — еженедельный дайджест статистики: активные/отписавшиеся/новые пользователи; логирует результат в stdout
+│   ├── announce_nonmembers.py      — разовый анонс для не-членов сообщества со стеком (уведомляет об открытии рассылки)
+│   ├── announce_nonmembers_nostack.py — разовый анонс для не-членов без стека (просит выбрать стек перед первой рассылкой)
 │   ├── vacancy_filter.py           — rule-based классификация вакансий по направлению и категории
 │   ├── vacancy_llm_filter.py       — LLM-классификация неуверенных вакансий (classify_uncertain)
 │   ├── vacancy_formatter.py        — форматирование карточки вакансии для Telegram (HTML)
@@ -24,8 +26,8 @@ vacancy-bot/
 │   ├── vacancy_dedup.py            — генерация dedup_key для дедупликации вакансий
 │   ├── telegraph.py                — публикация вакансий на Telegraph
 │   ├── handlers/
-│   │   ├── start.py                — /start: регистрация, главное меню, обработчик "🔒 Закрытое сообщество"
-│   │   ├── stacks.py               — /mystacks: просмотр и изменение стека
+│   │   ├── start.py                — /start: регистрация, главное меню, обновление community_member через get_chat_member(); notify_enabled больше НЕ зависит от членства
+│   │   ├── stacks.py               — /mystacks: просмотр и изменение стека; после сохранения — разные сообщения членам (COMMUNITY_THANKS_TEXT) и не-членам (JOIN_COMMUNITY_TEXT + кнопка-ссылка)
 │   │   ├── settings.py             — /settings: управление уведомлениями
 │   │   ├── admin.py                — /stats, relay: пересылка сообщений пользователей админу, ответ через бота, логирование в messages.log
 │   │   ├── donate.py               — кнопка поддержки проекта (ссылка на Tribute.co)
@@ -38,11 +40,11 @@ vacancy-bot/
 │   ├── weekly_digest.log           — лог еженедельных дайджестов
 │   └── run.sh                      — скрипт запуска
 ├── 02-notifier/
-│   ├── notifier.py                 — читает vacancies + users из Turso, отправляет подборки
-│   ├── sender.py                   — форматирование и отправка сообщений в Telegram (HTML mode)
-│   ├── db.py                       — запрос вакансий и пользователей, запись sent_notifications
+│   ├── notifier.py                 — точка входа: python notifier.py --now (разовый) или APScheduler-цикл
+│   ├── sender.py                   — матчинг direction↔stacks через STACK_TO_DIRECTION, конкурентная отправка (Semaphore), RateLimiter (~20 msg/сек), батчевая запись sent_notifications
+│   ├── db.py                       — клиент Turso (один переиспользуемый httpx.AsyncClient); get_active_users(), get_fresh_vacancies(), get_sent_map(), mark_sent_bulk(), disable_user(); TEST_MODE
 │   ├── requirements.txt            — aiogram, httpx, apscheduler, python-dotenv
-│   ├── .env.example                — TELEGRAM_BOT_TOKEN, TURSO_URL, TURSO_TOKEN, NOTIFY_HOUR, NOTIFY_MINUTE, VACANCIES_LOOKBACK_HOURS
+│   ├── .env.example                — TELEGRAM_BOT_TOKEN, TURSO_URL, TURSO_TOKEN, NOTIFY_HOUR, NOTIFY_MINUTE, VACANCIES_LOOKBACK_HOURS, TEST_MODE, ADMIN_TG_ID
 │   ├── CLAUDE.md                   — граница ответственности этапа
 │   └── run.sh                      — скрипт запуска
 └── 03-tribute-webhook/
@@ -64,7 +66,7 @@ vacancy-bot/
 | Tribute.co | Приём донатов и подписок; вебхуки обрабатываются в 03-tribute-webhook на Vercel | TRIBUTE_WEBHOOK_SECRET |
 | Vercel (Node.js serverless) | Хостинг webhook.js для обработки событий от Tribute.co | — (конфиг в .vercel/project.json) |
 | Google Sheets | Дашборд статистики бота (apps_script_dashboard.gs) | — (Google Apps Script, без API-ключа) |
-| Boosty | Ссылка на закрытое IT-сообщество "Технари" (inline URL-кнопка) | — (захардкожен COMMUNITY_URL в start.py) |
+| Boosty | Ссылка на закрытое IT-сообщество "Технари" (inline URL-кнопка) | — (захардкожен COMMUNITY_URL в stacks.py) |
 
 ## Схемы Turso (контракт между этапами)
 
@@ -76,10 +78,11 @@ CREATE TABLE IF NOT EXISTS users (
     username               TEXT,
     full_name              TEXT,
     stacks                 TEXT NOT NULL DEFAULT '',   -- JSON-массив: ["Python","Backend"]
-    notify_enabled         INTEGER NOT NULL DEFAULT 1,
+    notify_enabled         INTEGER NOT NULL DEFAULT 1, -- НЕ зависит от community_member: рассылка идёт всем
     notify_hour            INTEGER,
     ref_source             TEXT,                       -- payload из /start (например "youtube")
-    disabled_reason        TEXT,                       -- 'manual' / 'blocked' / 'non_member'
+    disabled_reason        TEXT,                       -- 'manual' / 'blocked'
+    community_member       INTEGER NOT NULL DEFAULT 0, -- 1 если состоит в COMMUNITY_CHAT_ID; обновляется при /start через get_chat_member(); 02-notifier это поле не читает — зарезервировано под future premium-рассылку
     last_seen_at           TIMESTAMP,
     stacks_set_at          TIMESTAMP,
     vacancy_submitted_at   TIMESTAMP,                  -- когда впервые подал заявку на вакансию
@@ -103,39 +106,44 @@ CREATE TABLE IF NOT EXISTS vacancy_submissions (
 ### Таблица `vacancies` (пишет 01-bot после одобрения; пишет it-vacancies-base; читает 02-notifier)
 ```sql
 CREATE TABLE IF NOT EXISTS vacancies (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    title         TEXT,
-    company       TEXT,
-    hr_contact    TEXT,
-    description   TEXT,
-    telegraph_url TEXT,
-    direction     TEXT,
-    category      TEXT,
-    dedup_key     TEXT UNIQUE,
-    published_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    id                INTEGER PRIMARY KEY,
+    raw_post_id       INTEGER,
+    title             TEXT,
+    formatted_post    TEXT,
+    company_name      TEXT,
+    recruiter_contact TEXT,
+    direction         TEXT,       -- канонический enum: backend/frontend/fullstack/mobile/qa/devops/data/ml/security/embedded/other
+    salary            TEXT,
+    work_format       TEXT,
+    telegraph_url     TEXT,
+    category          TEXT,
+    created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-### Таблица `sent_notifications` (пишет 02-notifier)
+### Таблица `sent_notifications` (пишет и читает только 02-notifier)
 ```sql
 CREATE TABLE IF NOT EXISTS sent_notifications (
-    tg_id      INTEGER NOT NULL,
-    vacancy_id INTEGER NOT NULL,
-    sent_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(tg_id, vacancy_id)
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_tg_id  INTEGER NOT NULL,
+    vacancy_id  INTEGER NOT NULL,
+    sent_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_tg_id, vacancy_id)
 );
 ```
 
 ## Ключевые паттерны
 1. **Turso как шина данных**: 01-bot пишет в `users` и `vacancy_submissions`, 02-notifier читает `users` + `vacancies` (которые пишет it-vacancies-base). Прямой связи между этапами нет — только через Turso.
-2. **Дедупликация через sent_notifications**: перед отправкой вакансии notifier проверяет таблицу `sent_notifications(tg_id, vacancy_id)` с UNIQUE constraint — одна вакансия никогда не отправляется пользователю дважды.
-3. **Нечёткое сопоставление стека**: сравнение `vacancies.direction` с `users.stacks` через `LOWER() + LIKE` — регистронезависимое, позволяет найти "python" в "Python Backend". Используются расширенные алиасы для маппинга технологий.
-4. **Встроенный scheduler в 01-bot**: bot.py запускает APScheduler параллельно с polling. По cron-расписанию `mon-fri hour=NOTIFY_HOUR, minute=NOTIFY_MINUTE` запускает `02-notifier/notifier.py` как subprocess. По умолчанию рассылка настроена на 13:00 UTC (16:00 MSK).
-5. **Кнопка сообщества**: в главном меню добавлена persistent-кнопка "🔒 Закрытое сообщество". Обработчик `cmd_community` в `start.py` отвечает описанием и InlineKeyboardButton с URL `https://boosty.to/ulbitv?utm_source=vac_bot`.
-6. **Admin relay с форвардингом и логированием**: `handlers/admin.py` перехватывает все входящие сообщения пользователей (текст, стикеры, документы, медиа). Функция `_log_incoming()` пишет JSONL-запись в `01-bot/messages.log` (поля: ts, tg_id, username, full_name, type, text, caption, sticker_emoji, file_name). Затем отправляет текстовый заголовок и форвардит оригинальное сообщение через `bot.forward_message()` — сохраняет форматирование и медиа. Служебные события чата (new_chat_members, left_chat_member и др.) расшифровываются в читаемый текст вместо пустого форварда. Ответ администратора через reply в боте пересылается обратно пользователю.
-7. **Статистика `/stats` и еженедельный дайджест**: команда `/stats` в `admin.py` (доступна только ADMIN_TG_ID) выводит воронку: всего зарегистрировано / активных (notifications=1) / отписавшихся / новых за неделю, источники трафика и причины отключений. `weekly_digest.py` — отдельный скрипт для еженедельного дайджеста тех же метрик; после отправки логирует результат в stdout: `[YYYY-MM-DD HH:MM:SS UTC] sent: total=, active=, new_users=`. Данные агрегируются из таблицы `users` в Turso.
-8. **Приём вакансий от пользователей**: `handlers/submit_vacancy.py` реализует FSM-флоу: пользователь отправляет текст вакансии → `vacancy_filter.py` (rule-based) → при неопределённости `vacancy_llm_filter.py` (OpenAI) → формирование карточки → подтверждение пользователем → при `VACANCY_AUTO_PUBLISH=true` сразу записывается в `vacancies`, иначе уходит на модерацию к ADMIN_TG_ID. `vacancy_dedup.py` генерирует `dedup_key` для защиты от повторных заявок. `telegraph.py` публикует полный текст на Telegraph. Каждая заявка логируется в `vacancy_submissions` со статусом `pending` → `approved`/`rejected`. Агрегаты `vacancy_submitted_at` и `vacancy_submit_count` хранятся в `users` для быстрой фильтрации без JOIN.
-9. **Tribute.co вебхук (03-tribute-webhook)**: Vercel serverless `api/webhook.js` принимает POST от Tribute.co, проверяет подпись (TRIBUTE_WEBHOOK_SECRET), записывает донат в Turso (таблица `donations`), отправляет персональную благодарность донору через Telegram Bot API.
+2. **Дедупликация через sent_notifications**: перед отправкой вакансии notifier загружает всю карту `get_sent_map()` одним запросом на прогон, записывает батчами через `mark_sent_bulk()` (~200 пар за раз) — одна вакансия никогда не отправляется пользователю дважды.
+3. **Точное сопоставление стека**: сравнение `vacancies.direction` с `users.stacks` через словарь `STACK_TO_DIRECTION` в `02-notifier/sender.py` — точное равенство, а не substring по `title`. `direction` — канонический enum из `vacancy_formatter.py`, идентичный у обоих писателей vacancies. Нечёткий поиск создавал ложные срабатывания (например, "QA Fullstack" → стек FullStack).
+4. **Конкурентная отправка с rate limiting**: `02-notifier/sender.py` обрабатывает пользователей параллельно через `asyncio.gather` + `Semaphore(CONCURRENCY=30)`. Общая скорость ограничена `RateLimiter(MSG_PER_SEC=20)` вместо per-user паузы — при 1000+ подписчиков последовательная отправка с sleep не укладывается в разумное время. `TelegramRetryAfter` (429) перехватывается и повторяется.
+5. **Рассылка открыта всем**: `02-notifier/db.py` выбирает пользователей только по `notify_enabled=1`, поле `community_member` в выборку не входит. `notify_enabled` в `01-bot/handlers/start.py` больше не меняется при смене статуса членства — только `community_member` обновляется через `update_community_status()`.
+6. **community_member** — информационное поле в `users`, обновляется при каждом `/start` через `get_chat_member(COMMUNITY_CHAT_ID)`. Используется только в `01-bot/handlers/stacks.py` (после сохранения стека: члены получают `COMMUNITY_THANKS_TEXT`, не-члены — `JOIN_COMMUNITY_TEXT` + кнопка-ссылка). `02-notifier` это поле не читает.
+7. **TEST_MODE в 02-notifier**: `TEST_MODE=1` (по умолчанию в `.env`) физически ограничивает SQL-запрос `get_active_users()` одним `ADMIN_TG_ID`. Переключать на `TEST_MODE=0` только после ручной проверки.
+8. **Встроенный scheduler в 01-bot**: bot.py запускает APScheduler параллельно с polling. По cron-расписанию запускает `02-notifier/notifier.py` как subprocess. По умолчанию рассылка настроена на 13:00 UTC (16:00 МСК).
+9. **Admin relay с форвардингом и логированием**: `handlers/admin.py` перехватывает все входящие сообщения пользователей (текст, стикеры, документы, медиа). Функция `_log_incoming()` пишет JSONL-запись в `01-bot/messages.log` (поля: ts, tg_id, username, full_name, type, text, caption, sticker_emoji, file_name). Служебные события чата (new_chat_members, left_chat_member и др.) расшифровываются в читаемый текст. Ответ администратора через reply в боте пересылается обратно пользователю.
+10. **Приём вакансий от пользователей**: `handlers/submit_vacancy.py` реализует FSM-флоу: текст вакансии → `vacancy_filter.py` → при неопределённости `vacancy_llm_filter.py` → карточка → подтверждение → при `VACANCY_AUTO_PUBLISH=true` сразу в `vacancies`, иначе модерация ADMIN_TG_ID. `vacancy_dedup.py` генерирует `dedup_key`. `telegraph.py` публикует полный текст. Статусы — в `vacancy_submissions` (pending/approved/rejected).
+11. **Tribute.co вебхук (03-tribute-webhook)**: Vercel serverless `api/webhook.js` принимает POST от Tribute.co, проверяет подпись (TRIBUTE_WEBHOOK_SECRET), записывает донат в Turso (таблица `donations`), отправляет персональную благодарность донору через Telegram Bot API.
 
 # Ecosystem Map
 
@@ -375,7 +383,7 @@ CREATE TABLE IF NOT EXISTS sent_notifications (
 - **technarei-stats**: Сбор статистики сообщества Текнари с выгрузкой в Google Sheets (03-sheets). Google Apps Script dashboard (`dashboard.gs`, `members_list.gs`) для визуализации и списка участников.
 - **weekly-digest**: Четыре cron-скрипта для ежедневной и еженедельной рассылки контент-плана из Notion в Telegram (06:00 UTC ежедневно, 05:50 UTC по понедельникам). Включает персональный дайджест для Тимура (`timur_daily.py`, `timur_weekly.py`).
 - **health-monitor**: Ежедневный мониторинг в 12:00 МСК. Сканирует crontab, проверяет логи и GitHub Actions, сравнивает с предыдущим состоянием (state.json), отправляет отчёт в Telegram.
-- **vacancy-bot**: Три модуля: 01-bot (aiogram, Turso, LLM-фильтрация вакансий), 02-notifier (ежедневная рассылка), 03-tribute-webhook (Vercel serverless Node.js — обработка вебхуков от Tribute.co для донатов и подписок).
+- **vacancy-bot**: Три модуля: 01-bot (aiogram, Turso, LLM-фильтрация вакансий, приём вакансий, разовые скрипты анонса), 02-notifier (ежедневная рассылка всем notify_enabled=1 независимо от community_member, конкурентная отправка), 03-tribute-webhook (Vercel serverless Node.js — обработка вебхуков от Tribute.co).
 - **tg-business-bot**: AI-автоответчик с Turso replica (referral_replica.db) для хранения реферальной базы. История диалогов сохраняется локально в JSON-файлах.
 - **client-content-assistant**: Персональный AI-ассистент для клиентов (первый клиент — Тимур). Модули: онбординг, захват идей (текст/голос), анализ контента, ревью, синхронизация с персональным Notion-пространством клиента. Конфигурация клиентов хранится в `clients/<name>/notion_config.json` и `strategy.md`. Использует Turso replica для локального хранения сессий и истории.
 
@@ -385,13 +393,16 @@ CREATE TABLE IF NOT EXISTS sent_notifications (
 - `stacks` хранится в `users` как JSON-строка `["Python","Backend"]` — при добавлении/удалении нужен парсинг на стороне бота.
 - Использование `HTML` parse mode для форматирования сообщений с вакансиями.
 - Фикс `AsyncIOScheduler`: корутина передается напрямую во избежание `RuntimeError: no running event loop`.
-- `COMMUNITY_URL` захардкожен в `01-bot/handlers/start.py` как `https://boosty.to/ulbitv?utm_source=vac_bot` — при смене ссылки менять там.
-- Admin relay (`handlers/admin.py`) активен для всех входящих сообщений, не обработанных другими handlers. Форвардит оригинальное сообщение через `bot.forward_message()` — сохраняет медиа, стикеры, документы. Служебные события чата (new_chat_members, left_chat_member и др.) не форвардятся — расшифровываются в текстовое описание и отправляются напрямую. Все входящие логируются в `01-bot/messages.log` (JSONL). `ADMIN_TG_ID` задаётся в `.env` — без него пересылка и логирование молча пропускаются.
+- `COMMUNITY_URL` захардкожен в `01-bot/handlers/stacks.py` как `https://boosty.to/ulbitv?utm_source=vac_bot` — при смене ссылки менять там. (Ранее был в `start.py` — перенесён в `stacks.py` при рефакторинге логики community_member.)
+- Admin relay (`handlers/admin.py`) активен для всех входящих сообщений, не обработанных другими handlers. Форвардит оригинальное сообщение через `bot.forward_message()` — сохраняет медиа, стикеры, документы. Служебные события чата расшифровываются в текстовое описание и отправляются напрямую. Все входящие логируются в `01-bot/messages.log` (JSONL). `ADMIN_TG_ID` задаётся в `.env` — без него пересылка и логирование молча пропускаются.
 - `/stats` доступна только пользователю с `ADMIN_TG_ID`. Данные берутся из таблицы `users` в Turso — агрегируются прямо в запросе.
 - При `VACANCY_AUTO_PUBLISH=false` вакансии от пользователей уходят на модерацию к ADMIN_TG_ID: inline-кнопки "Одобрить" / "Отклонить" прямо в сообщении. Статус модерации отражается в `vacancy_submissions.status`.
 - `vacancy_submitted_at` и `vacancy_submit_count` в `users` — денормализованные агрегаты из `vacancy_submissions` для быстрой фильтрации пользователей без JOIN.
+- `02-notifier/db.py` включает `TEST_MODE` (по умолчанию `1`): при включённом режиме `get_active_users()` возвращает только `ADMIN_TG_ID` — реальные подписчики не получают рассылку. Устанавливать `TEST_MODE=0` только после ручной проверки.
+- `sent_notifications` в схеме CLAUDE.md использует колонку `user_tg_id` (а не `tg_id`) — при изменении схемы или запросах использовать точное имя.
 
 ## История изменений
+- 2026-07-01 — рассылка открыта всем пользователям: `notify_enabled` в `start.py` больше не меняется при смене статуса членства; добавлена колонка `community_member INTEGER DEFAULT 0` в `users` (обновляется при /start через `update_community_status()` в `db.py`); `02-notifier` не читает `community_member`; `handlers/stacks.py` после сохранения стека показывает разные сообщения в зависимости от `community_member` (члены — `COMMUNITY_THANKS_TEXT`, не-члены — `JOIN_COMMUNITY_TEXT` + кнопка-ссылка); исправлено сопоставление direction↔stack в `02-notifier/sender.py` — точное равенство через `STACK_TO_DIRECTION` вместо substring по title; переработана конкурентная отправка в `sender.py` (asyncio.gather + Semaphore + RateLimiter вместо последовательной); добавлены разовые скрипты анонса `announce_nonmembers.py` и `announce_nonmembers_nostack.py`.
 - 2026-06-28 — приём вакансий от пользователей с трекингом статусов: новые файлы `vacancy_filter.py`, `vacancy_llm_filter.py`, `vacancy_formatter.py`, `vacancy_keywords.py`, `vacancy_dedup.py`, `telegraph.py`, `handlers/submit_vacancy.py`, `handlers/donate.py`; новая таблица `vacancy_submissions` (pending/approved/rejected); новые колонки `vacancy_submitted_at` и `vacancy_submit_count` в `users`; новые функции `log_vacancy_submission_pending()` и `update_vacancy_submission_status()` в `db.py`. Добавлен этап `03-tribute-webhook` (Vercel serverless Node.js): приём донатов от Tribute.co, запись в Turso, отправка благодарности донору.
 - 2026-06-21 — мелкие улучшения надёжности: `weekly_digest.py` логирует результат отправки в stdout (`[UTC] sent: total=, active=, new_users=`); `handlers/admin.py` расшифровывает служебные события чата (new_chat_members, left_chat_member и др.) в текстовое описание вместо пустого форварда.
 - 2026-06-14 — статистика и аналитика бота: команда `/stats` в `admin.py` (воронка, источники трафика, причины отключений), `weekly_digest.py` для еженедельного дайджеста метрик, `apps_script_dashboard.gs` для Google Sheets дашборда. Admin relay переведён на `bot.forward_message()` (поддержка нетекстовых сообщений) и логирование всех входящих в `01-bot/messages.log` (JSONL) через `_log_incoming()`.
