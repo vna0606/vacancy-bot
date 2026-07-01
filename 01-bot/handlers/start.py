@@ -4,7 +4,7 @@ from aiogram.filters import CommandStart
 from aiogram.filters.command import CommandObject
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
-from db import get_user, upsert_user, update_notify, update_last_seen, log_event
+from db import get_user, upsert_user, update_community_status, update_last_seen, log_event
 
 router = Router()
 
@@ -54,16 +54,11 @@ async def cmd_start(message: Message, bot: Bot, command: CommandObject):
     user = await get_user(tg_id)
     if user is None:
         await upsert_user(tg_id, username, full_name, ref_source)
-        await update_notify(tg_id, 1 if member else 0)
         await log_event(tg_id, "start", ref_source or "direct")
     else:
         await upsert_user(tg_id, username, full_name)  # ref_source не перезаписываем
-        # Реактивируем если вернулся в чат
-        if member and not user.get("notify_enabled", 0):
-            await update_notify(tg_id, 1)
-        elif not member and user.get("notify_enabled", 0):
-            await update_notify(tg_id, 0)
         await log_event(tg_id, "start", "returning_user")
+    await update_community_status(tg_id, member)
     await update_last_seen(tg_id)
 
     # Одинаковое приветствие для всех

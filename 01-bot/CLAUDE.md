@@ -38,7 +38,10 @@ CREATE TABLE IF NOT EXISTS users (
     notify_enabled         INTEGER NOT NULL DEFAULT 1,
     notify_hour            INTEGER,
     ref_source             TEXT,                       -- payload из /start (например "youtube")
-    disabled_reason        TEXT,                       -- 'manual' / 'blocked' / 'non_member'
+    disabled_reason        TEXT,                       -- 'manual' / 'blocked'
+    community_member       INTEGER NOT NULL DEFAULT 0, -- состоит ли в закрытом сообществе
+                                                        -- (обновляется на каждом /start через
+                                                        -- get_chat_member); НЕ гейтит рассылку
     last_seen_at           TIMESTAMP,
     stacks_set_at          TIMESTAMP,
     vacancy_submitted_at   TIMESTAMP,                  -- когда впервые подал заявку на вакансию
@@ -116,6 +119,12 @@ VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 - Turso-клиент: httpx напрямую к Turso HTTP API (`db.py:execute()`)
 - Стеки хранятся как JSON-строка в поле `stacks`
 - При /start: если пользователь уже есть в БД — обновляем username/full_name без перезаписи ref_source; если нет — INSERT
+- При /start также проверяем членство в `COMMUNITY_CHAT_ID` (`get_chat_member`) и пишем результат в
+  `community_member`. Это НЕ влияет на `notify_enabled` — рассылка идёт всем независимо от членства;
+  поле нужно для будущей premium-рассылки только для членов сообщества (`02-notifier` его пока не читает)
+- После сохранения стека (`handlers/stacks.py:cb_stack_save`) бот шлёт отдельное сообщение в
+  зависимости от `community_member`: членам — благодарность, не-членам — необязательное приглашение
+  вступить (с кнопкой-ссылкой). Это не условие получения рассылки, просто информационное сообщение
 - Список допустимых стеков — `ALL_STACKS` в `handlers/stacks.py`
 - Приём вакансий: технический фильтр (`vacancy_filter` → при необходимости `vacancy_llm_filter`)
   ОБЯЗАТЕЛЬНО проходит до LLM-форматирования — `vacancy_formatter` сам по себе не отбраковывает
@@ -152,7 +161,8 @@ TELEGRAM_BOT_TOKEN=...
 TURSO_URL=libsql://...
 TURSO_TOKEN=...
 ADMIN_TG_ID=...                          # кому пересылаются сообщения и заявки на модерацию вакансий
-COMMUNITY_CHAT_ID=...                    # опционально: chat_id закрытого сообщества для проверки членства
+COMMUNITY_CHAT_ID=...                    # опционально: chat_id закрытого сообщества; используется
+                                          # только для записи community_member, рассылку не гейтит
 NOTIFY_HOUR=9                            # час ежедневного дайджеста (UTC)
 
 # Приём вакансий через «📨 Разместить вакансию»

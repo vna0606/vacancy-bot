@@ -24,9 +24,19 @@ STACK_MENU_TEXT = (
     "Нажми 💾 Сохранить когда закончишь:"
 )
 
+COMMUNITY_URL = "https://boosty.to/ulbitv?utm_source=vac_bot"
+
 JOIN_COMMUNITY_TEXT = (
-    "🔒 Чтобы получать ежедневные подборки вакансий — вступи в наше [закрытое сообщество](https://boosty.to/ulbitv?utm_source=vac_bot).\n\n"
-    "Как только вступишь, нажми /start и рассылка сразу начнётся по твоему стеку."
+    'Кстати, у нас есть закрытое сообщество «Технари» — IT-сообщество для разработчиков, '
+    "которые хотят развивать системное мышление, получать классные офферы и расти по "
+    "карьерной лестнице. Без мотивационного шума, успешного успеха и бесконечных курсов "
+    "ради курсов. Все подробности по кнопке ниже."
+)
+
+COMMUNITY_THANKS_TEXT = 'Спасибо, что ты в нашем закрытом сообществе «Технари»! 🎉'
+
+NOTIFY_OFF_TEXT = (
+    "Стек сохранён. Сейчас уведомления выключены — включить можно через /notify."
 )
 
 
@@ -117,6 +127,7 @@ async def cb_stack_save(callback: CallbackQuery):
     stacks_str = ", ".join(selected) if selected else "не выбрано"
 
     is_active = int(user.get("notify_enabled", 0)) if user else 0
+    is_member = int(user.get("community_member", 0)) if user else 0
 
     if is_active:
         text = (
@@ -124,12 +135,19 @@ async def cb_stack_save(callback: CallbackQuery):
             "Изменить можно через кнопку *⚙️ Настроить стек* в меню."
         )
     else:
-        text = (
-            f"✅ Стек сохранён: *{stacks_str}*\n\n"
-            + JOIN_COMMUNITY_TEXT
-        )
+        text = NOTIFY_OFF_TEXT
 
     await callback.message.edit_text(text)
+
+    if is_active:
+        if is_member:
+            await callback.message.answer(COMMUNITY_THANKS_TEXT)
+        else:
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="Перейти в сообщество", url=COMMUNITY_URL)
+            ]])
+            await callback.message.answer(JOIN_COMMUNITY_TEXT, reply_markup=kb)
+
     await update_last_seen(tg_id)
     await log_event(tg_id, "stack_changed", json.dumps(selected, ensure_ascii=False))
     await callback.answer("Сохранено!")

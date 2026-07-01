@@ -49,7 +49,8 @@ async def execute(sql: str, args: list = None):
 
 async def get_user(tg_id: int):
     result = await execute(
-        "SELECT tg_id, username, full_name, stacks, notify_enabled, notify_hour FROM users WHERE tg_id = ?",
+        "SELECT tg_id, username, full_name, stacks, notify_enabled, notify_hour, community_member "
+        "FROM users WHERE tg_id = ?",
         [tg_id],
     )
     rows = result.get("rows", [])
@@ -97,6 +98,13 @@ async def update_notify(tg_id: int, enabled: int, reason: str = None):
             "UPDATE users SET notify_enabled = ? WHERE tg_id = ?",
             [enabled, tg_id],
         )
+
+
+async def update_community_status(tg_id: int, is_member: bool):
+    await execute(
+        "UPDATE users SET community_member = ? WHERE tg_id = ?",
+        [1 if is_member else 0, tg_id],
+    )
 
 
 async def update_notify_hour(tg_id: int, hour: int):
@@ -230,6 +238,7 @@ async def init_analytics_schema():
         "ALTER TABLE users ADD COLUMN ref_source TEXT",
         "ALTER TABLE users ADD COLUMN vacancy_submitted_at TIMESTAMP",
         "ALTER TABLE users ADD COLUMN vacancy_submit_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN community_member INTEGER NOT NULL DEFAULT 0",
     ]:
         try:
             await execute(col_sql)
