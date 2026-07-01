@@ -11,6 +11,27 @@ TURSO_TOKEN = os.getenv("TURSO_TOKEN", "")
 HEADERS = {"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"}
 PIPELINE_URL = f"{TURSO_URL}/v2/pipeline"
 
+# TEST_MODE=1 (по умолчанию) — рассылка физически ограничена одним ADMIN_TG_ID на уровне
+# SQL-запроса в get_active_users(), чтобы тестовый прогон не мог задеть подписчиков.
+TEST_MODE = os.getenv("TEST_MODE", "1") == "1"
+ADMIN_TG_ID = int(os.getenv("ADMIN_TG_ID", "0"))
+
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(timeout=15)
+    return _client
+
+
+async def close_client():
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None
+
 
 def _arg(value):
     if value is None:
@@ -25,14 +46,14 @@ async def execute(sql: str, args: list = None):
         {"type": "execute", "stmt": {"sql": sql, "args": [_arg(a) for a in (args or [])]}},
         {"type": "close"},
     ]}
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(PIPELINE_URL, headers=HEADERS, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        result = data["results"][0]
-        if result["type"] == "error":
-            raise RuntimeError(f"Turso error: {result['error']}")
-        return result["response"]["result"]
+    client = _get_client()
+    resp = await client.post(PIPELINE_URL, headers=HEADERS, json=payload)
+    resp.raise_for_status()
+    data = resp.json()
+    result = data["results"][0]
+    if result["type"] == "error":
+        raise RuntimeError(f"Turso error: {result['error']}")
+    return result["response"]["result"]
 
 
 def _rows_to_dicts(result):
@@ -47,11 +68,18 @@ def _rows_to_dicts(result):
 
 
 async def get_active_users():
-    result = await execute(
-        "SELECT tg_id, full_name, stacks FROM users WHERE notify_enabled = 1"
-    )
+    if TEST_MODE:
+        result = await execute(
+            "SELECT tg_id, full_name, stacks FROM users WHERE notify_enabled = 1 AND tg_id = ?",
+            [ADMIN_TG_ID],
+        )
+    else:
+        result = await execute(
+            "SELECT tg_id, full_name, stacks FROM users WHERE notify_enabled = 1"
+        )
     users = _rows_to_dicts(result)
     for u in users:
+        u["tg_id"] = int(u["tg_id"])
         try:
             u["stacks"] = json.loads(u["stacks"]) if u["stacks"] else []
         except Exception:
@@ -67,22 +95,41 @@ async def get_fresh_vacancies(lookback_hours: int):
         "FROM vacancies WHERE created_at >= ?",
         [since],
     )
-    return _rows_to_dicts(result)
+    vacancies = _rows_to_dicts(result)
+    for v in vacancies:
+        v["id"] = int(v["id"])
+    return vacancies
 
 
-async def get_sent_ids(user_tg_id: int):
+async def get_sent_map(vacancy_ids: list[int]) -> dict[int, set[int]]:
+    """Одним запросом вместо запроса на каждого пользователя: кому что из
+    сегодняшних вакансий уже отправлено."""
+    if not vacancy_ids:
+        return {}
+    placeholders = ",".join("?" for _ in vacancy_ids)
     result = await execute(
-        "SELECT vacancy_id FROM sent_notifications WHERE user_tg_id = ?",
-        [user_tg_id],
+        f"SELECT user_tg_id, vacancy_id FROM sent_notifications WHERE vacancy_id IN ({placeholders})",
+        list(vacancy_ids),
     )
-    return {row["vacancy_id"] for row in _rows_to_dicts(result)}
+    out: dict[int, set[int]] = {}
+    for row in _rows_to_dicts(result):
+        out.setdefault(int(row["user_tg_id"]), set()).add(int(row["vacancy_id"]))
+    return out
 
 
-async def mark_sent(user_tg_id: int, vacancy_id: int):
-    await execute(
-        "INSERT OR IGNORE INTO sent_notifications (user_tg_id, vacancy_id) VALUES (?, ?)",
-        [user_tg_id, vacancy_id],
-    )
+async def mark_sent_bulk(pairs: list[tuple[int, int]]):
+    """Одна вставка вместо вставки на каждую отправленную вакансию."""
+    if not pairs:
+        return
+    CHUNK = 200
+    for i in range(0, len(pairs), CHUNK):
+        chunk = pairs[i:i + CHUNK]
+        values_sql = ",".join("(?, ?)" for _ in chunk)
+        args = [x for pair in chunk for x in pair]
+        await execute(
+            f"INSERT OR IGNORE INTO sent_notifications (user_tg_id, vacancy_id) VALUES {values_sql}",
+            args,
+        )
 
 
 async def disable_user(tg_id: int, reason: str = "blocked"):
