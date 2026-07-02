@@ -3,6 +3,11 @@ import os
 import sys
 from dotenv import load_dotenv
 
+# Процесс живёт постоянно (не завершается после digest'а) — без line buffering
+# print() застревает во внутреннем буфере Python и не долетает до journalctl,
+# пока буфер не заполнится сам по себе.
+sys.stdout.reconfigure(line_buffering=True)
+
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
