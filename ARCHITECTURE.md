@@ -40,7 +40,7 @@ vacancy-bot/
 │   ├── weekly_digest.log           — лог еженедельных дайджестов
 │   └── run.sh                      — скрипт запуска
 ├── 02-notifier/
-│   ├── notifier.py                 — точка входа: python notifier.py --now (разовый) или APScheduler-цикл
+│   ├── notifier.py                 — точка входа: python notifier.py --now (разовый) или APScheduler-цикл; sys.stdout.reconfigure(line_buffering=True) в начале файла для корректного вывода в journalctl
 │   ├── sender.py                   — матчинг direction↔stacks через STACK_TO_DIRECTION, конкурентная отправка (Semaphore), RateLimiter (~20 msg/сек), батчевая запись sent_notifications
 │   ├── db.py                       — клиент Turso (один переиспользуемый httpx.AsyncClient); get_active_users(), get_fresh_vacancies(), get_sent_map(), mark_sent_bulk(), disable_user(); TEST_MODE
 │   ├── requirements.txt            — aiogram, httpx, apscheduler, python-dotenv
@@ -144,6 +144,7 @@ CREATE TABLE IF NOT EXISTS sent_notifications (
 9. **Admin relay с форвардингом и логированием**: `handlers/admin.py` перехватывает все входящие сообщения пользователей (текст, стикеры, документы, медиа). Функция `_log_incoming()` пишет JSONL-запись в `01-bot/messages.log` (поля: ts, tg_id, username, full_name, type, text, caption, sticker_emoji, file_name). Служебные события чата (new_chat_members, left_chat_member и др.) расшифровываются в читаемый текст. Ответ администратора через reply в боте пересылается обратно пользователю.
 10. **Приём вакансий от пользователей**: `handlers/submit_vacancy.py` реализует FSM-флоу: текст вакансии → `vacancy_filter.py` → при неопределённости `vacancy_llm_filter.py` → карточка → подтверждение → при `VACANCY_AUTO_PUBLISH=true` сразу в `vacancies`, иначе модерация ADMIN_TG_ID. `vacancy_dedup.py` генерирует `dedup_key`. `telegraph.py` публикует полный текст. Статусы — в `vacancy_submissions` (pending/approved/rejected).
 11. **Tribute.co вебхук (03-tribute-webhook)**: Vercel serverless `api/webhook.js` принимает POST от Tribute.co, проверяет подпись (TRIBUTE_WEBHOOK_SECRET), записывает донат в Turso (таблица `donations`), отправляет персональную благодарность донору через Telegram Bot API.
+12. **Line buffering в 02-notifier**: `02-notifier/notifier.py` вызывает `sys.stdout.reconfigure(line_buffering=True)` в самом начале — без этого `print()` застревает во внутреннем буфере Python и не доходит до journalctl, пока буфер не переполнится. Актуально для долгоживущих процессов (не завершается после digest'а).
 
 # Ecosystem Map
 
@@ -400,8 +401,10 @@ CREATE TABLE IF NOT EXISTS sent_notifications (
 - `vacancy_submitted_at` и `vacancy_submit_count` в `users` — денормализованные агрегаты из `vacancy_submissions` для быстрой фильтрации пользователей без JOIN.
 - `02-notifier/db.py` включает `TEST_MODE` (по умолчанию `1`): при включённом режиме `get_active_users()` возвращает только `ADMIN_TG_ID` — реальные подписчики не получают рассылку. Устанавливать `TEST_MODE=0` только после ручной проверки.
 - `sent_notifications` в схеме CLAUDE.md использует колонку `user_tg_id` (а не `tg_id`) — при изменении схемы или запросах использовать точное имя.
+- `02-notifier/notifier.py` вызывает `sys.stdout.reconfigure(line_buffering=True)` в начале процесса — без этого Python буферизует stdout и вывод `print()` не появляется в journalctl до заполнения буфера. Критично для долгоживущего scheduler-процесса.
 
 ## История изменений
+- 2026-07-05 — исправлена буферизация stdout в `02-notifier/notifier.py`: добавлен `sys.stdout.reconfigure(line_buffering=True)` в начало файла, чтобы логи немедленно доходили до journalctl в долгоживущем процессе.
 - 2026-07-01 — рассылка открыта всем пользователям: `notify_enabled` в `start.py` больше не меняется при смене статуса членства; добавлена колонка `community_member INTEGER DEFAULT 0` в `users` (обновляется при /start через `update_community_status()` в `db.py`); `02-notifier` не читает `community_member`; `handlers/stacks.py` после сохранения стека показывает разные сообщения в зависимости от `community_member` (члены — `COMMUNITY_THANKS_TEXT`, не-члены — `JOIN_COMMUNITY_TEXT` + кнопка-ссылка); исправлено сопоставление direction↔stack в `02-notifier/sender.py` — точное равенство через `STACK_TO_DIRECTION` вместо substring по title; переработана конкурентная отправка в `sender.py` (asyncio.gather + Semaphore + RateLimiter вместо последовательной); добавлены разовые скрипты анонса `announce_nonmembers.py` и `announce_nonmembers_nostack.py`.
 - 2026-06-28 — приём вакансий от пользователей с трекингом статусов: новые файлы `vacancy_filter.py`, `vacancy_llm_filter.py`, `vacancy_formatter.py`, `vacancy_keywords.py`, `vacancy_dedup.py`, `telegraph.py`, `handlers/submit_vacancy.py`, `handlers/donate.py`; новая таблица `vacancy_submissions` (pending/approved/rejected); новые колонки `vacancy_submitted_at` и `vacancy_submit_count` в `users`; новые функции `log_vacancy_submission_pending()` и `update_vacancy_submission_status()` в `db.py`. Добавлен этап `03-tribute-webhook` (Vercel serverless Node.js): приём донатов от Tribute.co, запись в Turso, отправка благодарности донору.
 - 2026-06-21 — мелкие улучшения надёжности: `weekly_digest.py` логирует результат отправки в stdout (`[UTC] sent: total=, active=, new_users=`); `handlers/admin.py` расшифровывает служебные события чата (new_chat_members, left_chat_member и др.) в текстовое описание вместо пустого форварда.
