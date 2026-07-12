@@ -136,7 +136,7 @@ CREATE TABLE IF NOT EXISTS sent_notifications (
 1. **Turso как шина данных**: 01-bot пишет в `users` и `vacancy_submissions`, 02-notifier читает `users` + `vacancies` (которые пишет it-vacancies-base). Прямой связи между этапами нет — только через Turso.
 2. **Дедупликация через sent_notifications**: перед отправкой вакансии notifier загружает всю карту `get_sent_map()` одним запросом на прогон, записывает батчами через `mark_sent_bulk()` (~200 пар за раз) — одна вакансия никогда не отправляется пользователю дважды.
 3. **Точное сопоставление стека**: сравнение `vacancies.direction` с `users.stacks` через словарь `STACK_TO_DIRECTION` в `02-notifier/sender.py` — точное равенство, а не substring по `title`. `direction` — канонический enum из `vacancy_formatter.py`, идентичный у обоих писателей vacancies. Нечёткий поиск создавал ложные срабатывания (например, "QA Fullstack" → стек FullStack).
-4. **Конкурентная отправка с rate limiting**: `02-notifier/sender.py` обрабатывает пользователей параллельно через `asyncio.gather` + `Semaphore(CONCURRENCY=30)`. Общая скорость ограничена `RateLimiter(MSG_PER_SEC=20)` вместо per-user паузы — при 1000+ подписчиков последовательная отправка с sleep не укладывается в разумное время. `TelegramRetryAfter` (429) перехватывается и повторяется.
+4. **Конкурентная отправка с rate limiting**: `02-notifier/sender.py` обрабатывает пользователей параллельно через `asyncio.gather` + `Semaphore(CONCURRENCY=30)`. Общая скорость ограничена `RateLimiter(MSG_PER_SEC=20)` вместо per-user паузы — при 1000+ подписчиках последовательная отправка с sleep не укладывается в разумное время. `TelegramRetryAfter` (429) перехватывается и повторяется.
 5. **Рассылка открыта всем**: `02-notifier/db.py` выбирает пользователей только по `notify_enabled=1`, поле `community_member` в выборку не входит. `notify_enabled` в `01-bot/handlers/start.py` больше не меняется при смене статуса членства — только `community_member` обновляется через `update_community_status()`.
 6. **community_member** — информационное поле в `users`, обновляется при каждом `/start` через `get_chat_member(COMMUNITY_CHAT_ID)`. Используется только в `01-bot/handlers/stacks.py` (после сохранения стека: члены получают `COMMUNITY_THANKS_TEXT`, не-члены — `JOIN_COMMUNITY_TEXT` + кнопка-ссылка). `02-notifier` это поле не читает.
 7. **TEST_MODE в 02-notifier**: `TEST_MODE=1` (по умолчанию в `.env`) физически ограничивает SQL-запрос `get_active_users()` одним `ADMIN_TG_ID`. Переключать на `TEST_MODE=0` только после ручной проверки.
@@ -152,7 +152,7 @@ CREATE TABLE IF NOT EXISTS sent_notifications (
 | Проект | Назначение | Стек | Входящие данные | Исходящие данные |
 |--------|-----------|------|----------------|-----------------|
 | `it-vacancies-base` | Сбор, фильтрация, обогащение и публикация IT-вакансий | Python (Telethon), OpenAI, SQLite/Turso, Telegraph | Посты из Telegram-каналов | Таблица `vacancies`, посты в Telegram, статьи Telegraph |
-| `vacancy-bot` | Персонализированная рассылка вакансий соискателям + приём вакансий + обработка донатов через Tribute.co | Python (aiogram), Turso, Node.js (Vercel) | Таблица `vacancies` (Turso), вебхуки Tribute.co | Сообщения в Telegram, подтверждения оплаты |
+| `vacancy-bot` | Персонализированная рассылка вакансий соискателям + приём вакансий от пользователей + обработка донатов через Tribute.co | Python (aiogram), Turso, Node.js (Vercel) | Таблица `vacancies` (Turso), вебхуки Tribute.co, вакансии от пользователей | Сообщения в Telegram, подтверждения оплаты, еженедельный дайджест вакансий |
 | `outreach-system` | Поиск рекламодателей, контактов и автоматизация рассылок | Python, Telethon, OpenAI, Hunter.io, Turso | Telegram, сайты, Hunter.io, IT-ивенты | Google Sheets, Notion CRM, Email/TG рассылки |
 | `tg-business-bot` | AI-автоответчик для бизнеса с интеграцией в CRM | Python (python-telegram-bot), Gemini CLI, Turso | Входящие сообщения в Telegram | Автоответы, медиакит, карточки лидов в Notion CRM |
 | `task-distributor` | Транскрибация встреч и управление задач (Legacy/Scripts) | Bash, Python, Deepgram, Claude CLI | Аудио/видео записи встреч | Транскрипты и задачи в Notion / Google Drive |
@@ -162,11 +162,11 @@ CREATE TABLE IF NOT EXISTS sent_notifications (
 | `agent-teams` | Оркестратор специализированных AI-агентов и навыков | Claude Code, Markdown-агенты, Python/JS Skills | Текстовые задачи, документы, URL | Ресёрч, отчёты, веб-артефакты, Google Sheets |
 | `finance-tracker` | Telegram Mini App для управления финансами | React, Telegram Mini App API, CSS | Транзакции, доходы/расходы | Визуализация бюджета, графики |
 | `meeting-transcription` | Транскрибация встреч с публикацией в Notion и Google Drive | Python (Flask), Deepgram (full mode) + Groq API + faster-whisper (quick mode), Claude CLI, Notion API, rclone | Аудио/видео файлы (Telegram или incoming/) | .docx транскрипт, саммари в Telegram, страница в Notion, файл в Google Drive |
-| `content-brain` | AI-система генерации контента для Telegram-канала из личного дневника и YouTube | Python, aiogram 3.x, Telethon, Claude CLI, NotebookLM (nlm CLI), Groq API, Turso | mood-diary Turso (read-only), посты @nikbase (Telethon), YouTube-видео | Идеи постов в cb_ideas, готовые посты для Telegram-канала, Reels-сценарии |
+| `content-brain` | AI-система генерации контента для Telegram-канала из личного дневника, YouTube и IT-ивентов | Python, aiogram 3.x, Telethon, Claude CLI, NotebookLM (nlm CLI), Groq API, Turso | mood-diary Turso (read-only), посты @nikbase (Telethon), YouTube-видео, IT-ивенты | Идеи постов в cb_ideas, готовые посты для Telegram-канала, Reels-сценарии, контент-стратегия по ивентам |
 | `audio-transcriber` | Telegram-бот транскрибации аудио (@assist_nik_bot) + Flask API для meeting-transcription | Python (aiogram), Groq API + faster-whisper (fallback) | Голосовые сообщения Telegram, аудио-файлы через API | Текстовый транскрипт в Telegram |
 | `tekhnari-agent` | AI-система анализа сообщества и генерации контента в стиле Тимура | Python, Claude CLI, Deepgram, Telethon, APScheduler, SQLite, Node.js | Сообщения Telegram-чата сообщества, записи встреч, история канала | Еженедельный и ежемесячный отчёт (md/docx), идеи контента |
 | `technarei-stats` | Сбор и визуализация статистики сообщества Текнари в Google Sheets | Python, Google Sheets API, Google Apps Script | Данные сообщества Текнари | Dashboard в Google Sheets |
-| `weekly-digest` | Ежедневная и еженедельная рассылка контент-плана из Notion в Telegram (включая персональный дайджест для Тимура) | Python, Notion API, Telegram Bot API, cron | База данных Notion с контент-планом | Дайджест-сообщения в Telegram |
+| `weekly-digest` | Ежедневная и еженедельная рассылка контент-плана из Notion в Telegram (включая персональный дайджест для Тимура и Никиты, уведомления о новых задачах) | Python, Notion API, Telegram Bot API, cron | База данных Notion с контент-планом | Дайджест-сообщения в Telegram, уведомления о новых задачах |
 | `health-monitor` | Ежедневный мониторинг всех автоматизаций (cron + GitHub Actions) | Python, GitHub API, Telegram Bot API | crontab, логи, GitHub Actions runs | Отчёт о состоянии автоматизаций в Telegram |
 | `client-content-assistant` | Персональный AI-ассистент для клиентов по созданию контента (онбординг, захват идей, анализ, ревью, синхронизация с Notion) | Python (aiogram), Claude CLI, Groq API (транскрибация), Notion API, SQLite (Turso replica) | Голосовые/текстовые сообщения клиента в Telegram, стратегия клиента (strategy.md) | Идеи и контент в Notion, аналитика и ревью в Telegram |
 
@@ -177,7 +177,7 @@ CREATE TABLE IF NOT EXISTS sent_notifications (
 |--------|---------------|
 | **Turso (libSQL cloud)** | `it-vacancies-base`, `vacancy-bot`, `mood-diary`, `outreach-system`, `content-brain`, `tg-business-bot` (referral replica), `client-content-assistant` |
 | **Telegram API / Bot API** | `it-vacancies-base`, `vacancy-bot`, `outreach-system`, `tg-business-bot`, `notion-pm`, `finance-tracker`, `content-brain`, `audio-transcriber`, `tekhnari-agent`, `weekly-digest`, `health-monitor`, `client-content-assistant` |
-| **Telethon (MTProto)** | `it-vacancies-base` (parser), `outreach-system` (parser/sender), `content-brain` (парсинг @nikbase), `tekhnari-agent` (импорт истории) |
+| **Telethon (MTProto)** | `it-vacancies-base` (parser), `outreach-system` (parser/sender), `content-brain` (парсинг @nikbase), `tekhnari-agent` (импорт истории + текущий сбор) |
 | **OpenAI API** | `it-vacancies-base`, `outreach-system`, `vacancy-bot` (LLM-фильтрация вакансий) |
 | **Notion API** | `outreach-system` (CRM), `notion-pm` (проекты), `tg-business-bot` (CRM), `task-distributor`, `meeting-transcription` (публикация встреч), `weekly-digest` (контент-план), `tekhnari-agent` (контент-календарь), `client-content-assistant` (синхронизация идей/контента) |
 | **Google Sheets API** | `outreach-system` (база контактов), `agent-teams` (skill: google-sheets), `technarei-stats` (dashboard) |
@@ -217,7 +217,9 @@ CREATE TABLE IF NOT EXISTS sent_notifications (
                         ┌─────────────────────┐
                         │     vacancy-bot      │
                         │ (Bot + Notifier +    │
-                        │  Tribute Webhook)    │
+                        │  Tribute Webhook +   │
+                        │  Weekly Digest +     │
+                        │  Submit Vacancy)     │
                         └─────────────────────┘
 
  Входящий запрос (TG)              Поиск лидов
@@ -246,7 +248,8 @@ CREATE TABLE IF NOT EXISTS sent_notifications (
                    │  weekly-digest  │
                    │ (Notion → TG    │
                    │  дайджест +     │
-                   │  Тимур digest)  │
+                   │  Тимур/Никита + │
+                   │  new_tasks)     │
                    └─────────────────┘
 
 ┌─────────────────────┐         ┌─────────────────────┐
@@ -260,9 +263,10 @@ CREATE TABLE IF NOT EXISTS sent_notifications (
                                 │   content-brain      │
                                 │ KB→Analyzer→Bot      │
                                 │ NotebookLM + Claude  │
-                                │ YouTube import       │
+                                │ YouTube + Events     │
+                                │ extract_tone + lens  │
                                 └──────────┬──────────┘
-                                           │ готовые идеи постов / Reels
+                                           │ посты / Reels / стратегия по ивентам
                                            ▼
                                   Telegram @nikbase
                                   (публикация вручную)
@@ -278,7 +282,8 @@ CREATE TABLE IF NOT EXISTS sent_notifications (
 ┌─────────────────────────┐       ┌─────────────────────┐
 │  meeting-transcription  │──────▶│   meeting-tasks     │
 │ (Deepgram→Notion→Drive) │       │ (трекинг задач)     │
-└──────────┬──────────────┘       └─────────────────────┘
+│ + audit/patch tools     │       └─────────────────────┘
+└──────────┬──────────────┘
            │ страница встречи
            ▼
     Notion Workspace
@@ -363,6 +368,7 @@ CREATE TABLE IF NOT EXISTS sent_notifications (
 | Основной (парсинг/рассылка) | `+79111068325` | `it-vacancies-base/01-parser/telegram_session.session` | Парсинг вакансий (it-vacancies-base) |
 | Кампейн (Точка Нетворк / content-brain) | `+79177386362` | `outreach-system/04-sheets-sender/campaign.session` | Рассылка по базе из Google Sheets (04-sheets-sender), парсинг @nikbase (content-brain) |
 | content-brain (копия кампейн) | `+79177386362` | `content-brain/01-knowledge-base/telegram_session.session` | Парсинг @nikbase |
+| tekhnari-agent (сбор сообщества) | — | `tekhnari-agent/collector/tekhnari_session.session` | Текущий сбор сообщений чата сообщества |
 | tekhnari-agent (импорт истории) | — | `tekhnari-agent/data/tekhnari_history.session` | Однократный импорт истории Telegram-чата сообщества |
 
 **Важно при создании нового проекта с Telethon:**
@@ -377,14 +383,14 @@ CREATE TABLE IF NOT EXISTS sent_notifications (
 - **finance-tracker**: Создана дизайн-система (Fintrack Design System) и прототип интерфейса на React для Telegram Mini App.
 - **it-vacancies-base**: Стабильный цикл парсинга и публикации (01-parser + 03-processor).
 - **meeting-tasks**: Модуль для структурированного ведения задач из сессий встреч (collector + runner).
-- **meeting-transcription**: Продакшн-сервер транскрибации (Flask, порт 5055). Принимает аудио/видео через Telegram или polling `incoming/`, публикует в Notion и Google Drive. Интегрирован с `meeting-tasks` (mode: tasks). Реализовано улучшенное извлечение задач (`improved_extraction`).
+- **meeting-transcription**: Продакшн-сервер транскрибации (Flask, порт 5055). Принимает аудио/видео через Telegram или polling `incoming/`, публикует в Notion и Google Drive. Интегрирован с `meeting-tasks` (mode: tasks). Реализовано улучшенное извлечение задач (`improved_extraction`). Добавлены инструменты аудита и патча Notion: `audit_notion_responsible.py`, `patch_notion_responsible.py`, `generate_audit_md.py`, `migrate_master_doc.py`.
 - **mood-diary**: Стабильная PWA/Telegram версия с глубокой аналитикой в папке `insights`.
-- **content-brain**: Полностью развернута трёхэтапная система (01-knowledge-base + 02-analyzer + 03-bot). Индексировано 13 резюме + 670 сообщений дневника + 298 постов @nikbase. NotebookLM подключён (2 ноутбука: архив + fresh). Добавлен импорт YouTube-видео (`scripts/youtube_import.py`) и генерация Reels-сценариев (`prompts_reels.py`). Автообновление NLM по крону настроено.
-- **tekhnari-agent**: Трёхмодульная система (collector + analyst + marketer). Боты запущены в чате сообщества и чате команды. Еженедельный запуск по APScheduler (воскресенье 20:00), ежемесячные отчёты (`marketer/monthly_report.py`). Deepgram для транскрибации встреч, Claude CLI для анализа, Node.js для генерации .docx отчётов. Контент-план публикуется в Notion.
+- **content-brain**: Полностью развернута трёхэтапная система (01-knowledge-base + 02-analyzer + 03-bot). Индексировано 13 резюме + 670 сообщений дневника + 298 постов @nikbase. NotebookLM подключён (2 ноутбука: архив + fresh). Добавлен импорт YouTube-видео (`scripts/youtube_import.py`) и генерация Reels-сценариев (`prompts_reels.py`). Автообновление NLM по крону настроено. В 03-bot добавлены хендлеры анализа IT-ивентов (`handlers/events.py`, `handlers/events_strategy.py`), форматированного написания постов (`handlers/format_writer.py`, `handlers/post_writer.py`), извлечение тона голоса автора (`extract_tone.py`, `lens.md`) и YouTube-промпты (`prompts_youtube.py`).
+- **tekhnari-agent**: Трёхмодульная система (collector + analyst + marketer). Боты запущены в чате сообщества и чате команды. Еженедельный запуск по APScheduler (воскресенье 20:00), ежемесячные отчёты (`marketer/monthly_report.py`). Deepgram для транскрибации встреч, Claude CLI для анализа, Node.js для генерации .docx отчётов. Контент-план публикуется в Notion. Telethon-сессия для текущего сбора: `collector/tekhnari_session.session`.
 - **technarei-stats**: Сбор статистики сообщества Текнари с выгрузкой в Google Sheets (03-sheets). Google Apps Script dashboard (`dashboard.gs`, `members_list.gs`) для визуализации и списка участников.
-- **weekly-digest**: Четыре cron-скрипта для ежедневной и еженедельной рассылки контент-плана из Notion в Telegram (06:00 UTC ежедневно, 05:50 UTC по понедельникам). Включает персональный дайджест для Тимура (`timur_daily.py`, `timur_weekly.py`).
+- **weekly-digest**: Шесть скриптов для ежедневной и еженедельной рассылки: `daily_digest.py` (общий контент-план, 06:00 UTC), `timur_daily.py` + `timur_weekly.py` (персональный дайджест для Тимура, 05:50 UTC по понедельникам), `nikita_daily.py` (персональный дайджест для Никиты), `new_tasks_notifier.py` + `notifier.py` (уведомления о новых задачах из Notion).
 - **health-monitor**: Ежедневный мониторинг в 12:00 МСК. Сканирует crontab, проверяет логи и GitHub Actions, сравнивает с предыдущим состоянием (state.json), отправляет отчёт в Telegram.
-- **vacancy-bot**: Три модуля: 01-bot (aiogram, Turso, LLM-фильтрация вакансий, приём вакансий, разовые скрипты анонса), 02-notifier (ежедневная рассылка всем notify_enabled=1 независимо от community_member, конкурентная отправка), 03-tribute-webhook (Vercel serverless Node.js — обработка вебхуков от Tribute.co).
+- **vacancy-bot**: Три модуля: 01-bot (aiogram, Turso, LLM-фильтрация, приём вакансий от пользователей через `submit_vacancy.py`, обработка донатов `donate.py`, `weekly_digest.py` — еженедельная подборка), 02-notifier (ежедневная рассылка, рассылка открыта всем пользователям независимо от членства в сообществе), 03-tribute-webhook (Vercel serverless Node.js — обработка вебхуков от Tribute.co для донатов и подписок).
 - **tg-business-bot**: AI-автоответчик с Turso replica (referral_replica.db) для хранения реферальной базы. История диалогов сохраняется локально в JSON-файлах.
 - **client-content-assistant**: Персональный AI-ассистент для клиентов (первый клиент — Тимур). Модули: онбординг, захват идей (текст/голос), анализ контента, ревью, синхронизация с персональным Notion-пространством клиента. Конфигурация клиентов хранится в `clients/<name>/notion_config.json` и `strategy.md`. Использует Turso replica для локального хранения сессий и истории.
 
