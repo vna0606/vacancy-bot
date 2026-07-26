@@ -1,1 +1,1 @@
-You've hit your limit · resets 3:30am (UTC)
+Not logged in · Please run /login
