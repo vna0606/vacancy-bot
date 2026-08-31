@@ -1,5 +1,6 @@
 import os
 import json
+import sqlite3
 import httpx
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
@@ -10,6 +11,43 @@ TURSO_URL = os.getenv("TURSO_URL", "").replace("libsql://", "https://")
 TURSO_TOKEN = os.getenv("TURSO_TOKEN", "")
 HEADERS = {"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"}
 PIPELINE_URL = f"{TURSO_URL}/v2/pipeline"
+
+# ВРЕМЕННЫЙ мост на время блокировки Turso (см. it-vacancies-base/CHANNELS.md).
+LOCAL_DB_PATH = os.getenv(
+    "LOCAL_DB_PATH",
+    "/home/ubuntu/claude-bot/workspace/it-vacancies-base/vacancies.db",
+)
+_local_conn = None
+
+
+def _get_local_conn():
+    global _local_conn
+    if _local_conn is None:
+        _local_conn = sqlite3.connect(LOCAL_DB_PATH, check_same_thread=False)
+        _local_conn.execute("PRAGMA journal_mode=WAL")
+    return _local_conn
+
+
+def _cell(value):
+    if value is None:
+        return {"type": "null", "value": None}
+    if isinstance(value, int):
+        return {"type": "integer", "value": str(value)}
+    if isinstance(value, float):
+        return {"type": "float", "value": str(value)}
+    return {"type": "text", "value": str(value)}
+
+
+def _execute_local(sql: str, args: list = None):
+    conn = _get_local_conn()
+    cur = conn.execute(sql, args or [])
+    if cur.description is not None:
+        cols = [{"name": d[0]} for d in cur.description]
+        rows = [[_cell(v) for v in row] for row in cur.fetchall()]
+    else:
+        cols, rows = [], []
+        conn.commit()
+    return {"cols": cols, "rows": rows}
 
 # TEST_MODE=1 (по умолчанию) — рассылка физически ограничена одним ADMIN_TG_ID на уровне
 # SQL-запроса в get_active_users(), чтобы тестовый прогон не мог задеть подписчиков.
@@ -42,6 +80,8 @@ def _arg(value):
 
 
 async def execute(sql: str, args: list = None):
+    if not (TURSO_URL and TURSO_TOKEN):
+        return _execute_local(sql, args)
     payload = {"requests": [
         {"type": "execute", "stmt": {"sql": sql, "args": [_arg(a) for a in (args or [])]}},
         {"type": "close"},

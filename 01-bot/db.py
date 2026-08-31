@@ -1,5 +1,6 @@
 import os
 import json
+import sqlite3
 import httpx
 from dotenv import load_dotenv
 
@@ -15,6 +16,48 @@ HEADERS = {
 
 PIPELINE_URL = f"{TURSO_URL}/v2/pipeline"
 
+# ВРЕМЕННЫЙ мост на время блокировки Turso (см. it-vacancies-base/CHANNELS.md).
+# Если TURSO_URL/TURSO_TOKEN не заданы — работаем с тем же локальным файлом,
+# что и it-vacancies-base (это одна и та же логическая Turso-база, эмбеддед-реплика
+# уже содержит таблицы users/vacancies/sent_notifications и т.д.).
+LOCAL_DB_PATH = os.getenv(
+    "LOCAL_DB_PATH",
+    "/home/ubuntu/claude-bot/workspace/it-vacancies-base/vacancies.db",
+)
+_local_conn = None
+
+
+def _get_local_conn():
+    global _local_conn
+    if _local_conn is None:
+        _local_conn = sqlite3.connect(LOCAL_DB_PATH, check_same_thread=False)
+        _local_conn.execute("PRAGMA journal_mode=WAL")
+    return _local_conn
+
+
+def _cell(value):
+    if value is None:
+        return {"type": "null", "value": None}
+    if isinstance(value, int):
+        return {"type": "integer", "value": str(value)}
+    if isinstance(value, float):
+        return {"type": "float", "value": str(value)}
+    return {"type": "text", "value": str(value)}
+
+
+def _execute_local(sql: str, args: list = None):
+    """Тот же формат ответа, что и Turso HTTP API — чтобы весь остальной
+    код (get_user, _rows_to_dicts и т.д.) не пришлось переписывать."""
+    conn = _get_local_conn()
+    cur = conn.execute(sql, args or [])
+    if cur.description is not None:
+        cols = [{"name": d[0]} for d in cur.description]
+        rows = [[_cell(v) for v in row] for row in cur.fetchall()]
+    else:
+        cols, rows = [], []
+        conn.commit()
+    return {"cols": cols, "rows": rows}
+
 
 def _arg(value):
     if value is None:
@@ -25,6 +68,8 @@ def _arg(value):
 
 
 async def execute(sql: str, args: list = None):
+    if not (TURSO_URL and TURSO_TOKEN):
+        return _execute_local(sql, args)
     payload = {
         "requests": [
             {
@@ -131,6 +176,19 @@ async def insert_vacancy(
     # dedup_key — тот же алгоритм, что у it-vacancies-base (vacancy_dedup.py), чтобы автопайплайн
     # видел вакансии, добавленные через бота, при своей проверке на дубликаты.
     args = [title, company, hr_contact, salary, work_format, telegraph_url, direction, category, dedup_key]
+    if not (TURSO_URL and TURSO_TOKEN):
+        conn = _get_local_conn()
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute(
+            "INSERT INTO vacancies "
+            "(raw_post_id, title, company_name, recruiter_contact, "
+            "salary, work_format, telegraph_url, direction, category, dedup_key) "
+            "VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            args,
+        )
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys = ON")
+        return
     payload = {
         "requests": [
             {"type": "execute", "stmt": {"sql": "PRAGMA foreign_keys = OFF"}},
@@ -184,6 +242,22 @@ async def log_event(tg_id: int, event: str, payload: str = None):
 async def log_vacancy_submission_pending(tg_id: int) -> int:
     """Записывает заявку на вакансию со статусом 'pending' и обновляет счётчик в users.
     Возвращает id строки в vacancy_submissions."""
+    if not (TURSO_URL and TURSO_TOKEN):
+        conn = _get_local_conn()
+        cur = conn.execute(
+            "INSERT INTO vacancy_submissions (tg_id, status) VALUES (?, 'pending')",
+            [tg_id],
+        )
+        submission_id = cur.lastrowid
+        conn.execute(
+            "UPDATE users SET "
+            "vacancy_submitted_at = COALESCE(vacancy_submitted_at, CURRENT_TIMESTAMP), "
+            "vacancy_submit_count = vacancy_submit_count + 1 "
+            "WHERE tg_id = ?",
+            [tg_id],
+        )
+        conn.commit()
+        return int(submission_id)
     payload = {
         "requests": [
             {
