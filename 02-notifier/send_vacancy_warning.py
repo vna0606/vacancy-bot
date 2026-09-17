@@ -26,14 +26,7 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 
 
 def build_message(vacancy_url: str) -> str:
-    safe_url = html.escape(vacancy_url, quote=True)
-    return (
-        "Ребята, мы ранее опубликовали "
-        f'<a href="{safe_url}">эту вакансию</a>. '
-        "К сожалению, она оказалась мошеннической — пожалуйста, не откликайтесь на неё "
-        "и не передавайте никаких данных; удалить уже отправленное сообщение мы не можем, "
-        "поэтому предупреждаем вас отдельно."
-    )
+    return f"Речь вот об этой вакансии: {html.escape(vacancy_url)}"
 
 
 async def get_vacancy(vacancy_url: str) -> dict:
