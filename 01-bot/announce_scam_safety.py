@@ -16,6 +16,7 @@ from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from dotenv import load_dotenv
 
 
@@ -38,7 +39,7 @@ TEXT = (
     "Мы обновили нашу статью и собрали там все актуальные способы скама: от классической "
     "кражи данных и манипуляций с банками до фальшивых агентств и опасных схем с "
     "оформлением ИП.\n\n"
-    f"👉 Читать статью со всеми актуальными схемами: {ARTICLE_URL}\n\n"
+    f"👉 [Читать статью со всеми актуальными схемами]({ARTICLE_URL})\n\n"
     "Чтобы эта информация всегда была под рукой, мы добавили ее в меню бота. Теперь "
     "статья со всеми схемами и правилами безопасности доступна по кнопке "
     "«⚠️ Про мошенников».\n\n"
@@ -48,6 +49,10 @@ TEXT = (
     "Берегите себя и проверяйте компании до того, как отправлять документы или "
     "подписывать офферы."
 )
+
+ARTICLE_KEYBOARD = InlineKeyboardMarkup(inline_keyboard=[[
+    InlineKeyboardButton(text="Читать статью", url=ARTICLE_URL),
+]])
 
 
 class RateLimiter:
@@ -67,11 +72,16 @@ class RateLimiter:
                 self._next_time = now + self._interval
 
 
-async def send_with_retry(limiter: RateLimiter, bot: Bot, tg_id: int):
+async def send_with_retry(limiter: RateLimiter, bot: Bot, tg_id: int, reply_markup):
     while True:
         await limiter.acquire()
         try:
-            await bot.send_message(tg_id, TEXT, reply_markup=MAIN_MENU)
+            await bot.send_message(
+                tg_id,
+                TEXT,
+                reply_markup=reply_markup,
+                disable_web_page_preview=True,
+            )
             return
         except TelegramRetryAfter as exc:
             await asyncio.sleep(exc.retry_after)
@@ -91,7 +101,7 @@ async def main():
     limiter = RateLimiter(MSG_PER_SEC)
     try:
         if args.test:
-            await send_with_retry(limiter, bot, ADMIN_TG_ID)
+            await send_with_retry(limiter, bot, ADMIN_TG_ID, ARTICLE_KEYBOARD)
             print(f"[scam-safety] test sent only to admin {ADMIN_TG_ID}")
             return
 
@@ -112,7 +122,7 @@ async def main():
             nonlocal sent, failed
             async with semaphore:
                 try:
-                    await send_with_retry(limiter, bot, tg_id)
+                    await send_with_retry(limiter, bot, tg_id, MAIN_MENU)
                     async with counter_lock:
                         sent += 1
                 except TelegramForbiddenError:
