@@ -1,0 +1,11 @@
+[Unit]
+Description=Run vacancy bot scam safety announcement on 2026-09-19 at 12:00 MSK
+
+[Timer]
+OnCalendar=2026-09-19 09:00:00 UTC
+AccuracySec=1s
+Persistent=true
+Unit=vacancy-scam-safety-broadcast.service
+
+[Install]
+WantedBy=timers.target

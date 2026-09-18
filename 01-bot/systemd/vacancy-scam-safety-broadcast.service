@@ -1,0 +1,15 @@
+[Unit]
+Description=Vacancy bot scam safety announcement
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/claude-bot/workspace/vacancy-bot/01-bot
+Environment=HOME=/home/ubuntu
+Environment=PATH=/home/ubuntu/claude-bot/venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=TURSO_URL=
+Environment=TURSO_TOKEN=
+ExecStart=/home/ubuntu/claude-bot/venv/bin/python announce_scam_safety.py --send --confirm-production
+

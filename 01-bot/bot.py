@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'))
 
-from handlers import start, stacks, settings, submit_vacancy, admin, donate
+from handlers import start, stacks, settings, submit_vacancy, admin, donate, scam_safety
 from db import init_analytics_schema
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -24,6 +24,7 @@ async def main():
     dp.include_router(stacks.router)
     dp.include_router(settings.router)
     dp.include_router(donate.router)
+    dp.include_router(scam_safety.router)
     dp.include_router(admin.router)
 
     await init_analytics_schema()

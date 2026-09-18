@@ -15,6 +15,7 @@ MAIN_MENU_BUTTON_TEXTS = {
     "🔒 Закрытое сообщество",
     "📨 Разместить вакансию",
     "❤️ Поддержать",
+    "⚠️ Про мошенников",
 }
 
 MAIN_MENU = ReplyKeyboardMarkup(
@@ -22,6 +23,7 @@ MAIN_MENU = ReplyKeyboardMarkup(
         [KeyboardButton(text="⚙️ Настроить стек"), KeyboardButton(text="🔔 Уведомления")],
         [KeyboardButton(text="👤 Мой профиль"), KeyboardButton(text="📨 Разместить вакансию")],
         [KeyboardButton(text="🔒 Закрытое сообщество"), KeyboardButton(text="❤️ Поддержать")],
+        [KeyboardButton(text="⚠️ Про мошенников")],
     ],
     resize_keyboard=True,
     persistent=True,
