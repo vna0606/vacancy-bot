@@ -16,7 +16,6 @@ from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from dotenv import load_dotenv
 
 
@@ -49,11 +48,6 @@ TEXT = (
     "Берегите себя и проверяйте компании до того, как отправлять документы или "
     "подписывать офферы."
 )
-
-ARTICLE_KEYBOARD = InlineKeyboardMarkup(inline_keyboard=[[
-    InlineKeyboardButton(text="Читать статью", url=ARTICLE_URL),
-]])
-
 
 class RateLimiter:
     def __init__(self, rate_per_sec: float):
@@ -101,7 +95,7 @@ async def main():
     limiter = RateLimiter(MSG_PER_SEC)
     try:
         if args.test:
-            await send_with_retry(limiter, bot, ADMIN_TG_ID, ARTICLE_KEYBOARD)
+            await send_with_retry(limiter, bot, ADMIN_TG_ID, MAIN_MENU)
             print(f"[scam-safety] test sent only to admin {ADMIN_TG_ID}")
             return
 
