@@ -63,5 +63,19 @@
         ]
       }
     ]
+  },
+  "metrics": {
+    "names": [
+      "Пользователей бота вакансий",
+      "Получают рассылку вакансий",
+      "Новых пользователей бота вакансий"
+    ],
+    "business_line": "it-vacancies",
+    "refresh": [
+      "/home/ubuntu/claude-bot/workspace/dispatcher/02-node-reporters/venv/bin/python3",
+      "/home/ubuntu/claude-bot/workspace/dispatcher/02-node-reporters/collect_tools.py",
+      "--only",
+      "vacancy-bot"
+    ]
   }
 }
