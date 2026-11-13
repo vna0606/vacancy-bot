@@ -132,7 +132,10 @@ async def get_fresh_vacancies(lookback_hours: int):
     result = await execute(
         "SELECT id, title, formatted_post, company_name, recruiter_contact, "
         "direction, salary, work_format, telegraph_url "
-        "FROM vacancies WHERE created_at >= ?",
+        "FROM vacancies WHERE created_at >= ? "
+        # Без страницы Telegraph у вакансии нет описания — не рассылаем
+        # (публикатор it-vacancies-base мог не достучаться до api.telegra.ph).
+        "AND telegraph_url IS NOT NULL AND telegraph_url != ''",
         [since],
     )
     vacancies = _rows_to_dicts(result)
